@@ -1,41 +1,57 @@
 import os
 import datetime
 import urllib.parse
+import webbrowser
+import time
+import pyautogui
+from AppOpener import open as open_app
 
 def open_website(url):
-    """Opens a specific URL in the default web browser."""
+    """Opens a specific URL directly using Windows system commands."""
     if not url.startswith("http"):
         url = "https://" + url
-    os.startfile(url)
+    
+    # Run silently via OS. This doesn't care about mouse movement or focused windows!
+    try:
+        import subprocess
+        # Tries default browser first
+        subprocess.run(f'start "" "{url}"', shell=True)
+    except:
+        pass
+    
     return f"Successfully opened {url}."
 
 def search_youtube(query):
-    """Searches YouTube for a specific query."""
+    """Searches YouTube directly using Windows system commands."""
     encoded_query = urllib.parse.quote(query)
     url = f"https://www.youtube.com/results?search_query={encoded_query}"
-    os.startfile(url)
-    return f"Successfully searched YouTube for: {query}."
+    
+    try:
+        import subprocess
+        # Tries default browser first
+        subprocess.run(f'start "" "{url}"', shell=True)
+    except:
+        pass
+        
+    return f"Successfully searched YouTube for: {query}"
 
 def open_application(app_name):
-    """Opens a local Windows application."""
-    app_map = {
-        "notepad": "notepad",
-        "calculator": "calc",
-        "calc": "calc",
-        "chrome": "chrome",
-        "spotify": "spotify",
-        "edge": "msedge",
-        "explorer": "explorer"
-    }
-    
-    cmd = app_map.get(app_name.lower())
-    if cmd:
-        os.system(f"start {cmd}")
+    """Opens a local Windows application robustly."""
+    try:
+        # AppOpener automatically finds and opens apps from Windows Start Menu
+        open_app(app_name, match_closest=True)
         return f"Successfully opened {app_name}."
-    else:
-        # Fallback to general start command
-        os.system(f"start {app_name}")
-        return f"Attempted to open {app_name} via Windows Start."
+    except Exception as e:
+        # Fallback to pure pyautogui if somehow AppOpener fails
+        try:
+            pyautogui.press("win")
+            time.sleep(0.5)
+            pyautogui.write(app_name, interval=0.05)
+            time.sleep(0.5)
+            pyautogui.press("enter")
+            return f"Successfully opened {app_name} via keyboard fallback."
+        except Exception as fallback_e:
+            return f"Failed to open {app_name}: {e}. Fallback also failed: {fallback_e}"
 
 def get_time_and_date():
     """Returns the current date and time."""
@@ -95,6 +111,7 @@ import time
 def press_keys(keys):
     """Simulates pressing keyboard keys (e.g. 'ctrl+w', 'space', 'playpause')."""
     try:
+        pyautogui.FAILSAFE = False
         keys_list = keys.split('+')
         if len(keys_list) == 1:
             pyautogui.press(keys_list[0].strip())
@@ -107,6 +124,7 @@ def press_keys(keys):
 def type_text(text):
     """Types out text simulating a keyboard."""
     try:
+        pyautogui.FAILSAFE = False
         pyautogui.write(text, interval=0.05)
         return f"Successfully typed: {text}"
     except Exception as e:
