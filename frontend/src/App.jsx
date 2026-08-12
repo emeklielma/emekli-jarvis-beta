@@ -8,6 +8,8 @@ function App() {
   const [cpuUsage, setCpuUsage] = useState(24)
   const [ramUsage, setRamUsage] = useState(48)
   const [netSpeed, setNetSpeed] = useState(13)
+  const [isMicActive, setIsMicActive] = useState(true)
+  const [wsInstance, setWsInstance] = useState(null)
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -70,6 +72,9 @@ function App() {
         setMessages(prev => [...prev, { sender: 'err', text: 'ERR: Brain Disconnected. Reconnecting...' }])
         reconnectInterval = setTimeout(connect, 3000);
       };
+      
+      // Store ws in state so buttons can use it!
+      setWsInstance(ws);
     };
 
     connect();
@@ -79,6 +84,21 @@ function App() {
       clearTimeout(reconnectInterval);
     }
   }, []);
+
+  const toggleMic = () => {
+    const newState = !isMicActive;
+    setIsMicActive(newState);
+    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+      wsInstance.send(JSON.stringify({ action: "toggle_mic", state: newState }));
+    }
+  }
+
+  const interrupt = () => {
+    window.speechSynthesis.cancel();
+    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+      wsInstance.send(JSON.stringify({ action: "interrupt" }));
+    }
+  }
 
   const sendMessage = async (text) => {
     if (!text.trim()) return
@@ -215,9 +235,9 @@ function App() {
           </div>
           
           <div className="action-buttons">
-            <button className="btn btn-red" onClick={() => window.speechSynthesis.cancel()}>✋ INTERRUPT (ESC)</button>
-            <button className={`btn btn-green active`}>
-              🎤 PYTHON MICROPHONE ACTIVE
+            <button className="btn btn-red" onClick={interrupt}>✋ INTERRUPT (ESC)</button>
+            <button className={`btn ${isMicActive ? 'btn-green' : 'btn-red'} active`} onClick={toggleMic}>
+              {isMicActive ? '🎤 PYTHON MICROPHONE ACTIVE' : '🔇 MICROPHONE MUTED'}
             </button>
           </div>
         </div>

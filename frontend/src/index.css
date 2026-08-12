@@ -188,6 +188,7 @@ body {
 .ring-3 { width: 50%; height: 50%; border: 1px dashed rgba(0, 210, 255, 0.5); border-bottom: 2px solid var(--cyan); background: rgba(0, 210, 255, 0.05); animation: spinRight 15s linear infinite; }
 
 .radar-ring.LISTENING { border-color: var(--green); box-shadow: 0 0 30px rgba(0, 255, 102, 0.2); }
+.radar-ring.HEARING { border-color: #ff6600; box-shadow: 0 0 40px rgba(255, 102, 0, 0.6); animation-duration: 1s; }
 .radar-ring.THINKING { border-color: var(--yellow); box-shadow: 0 0 30px rgba(255, 204, 0, 0.2); }
 
 .radar-center {

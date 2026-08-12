@@ -34,7 +34,7 @@ import numpy as np
 
 import queue
 
-def record_audio(filename="temp.wav"):
+def record_audio(filename="temp.wav", on_speech_start=None):
     """Records audio dynamically! Stops automatically when you finish speaking."""
     try:
         # Ask Windows what settings the default microphone wants
@@ -71,7 +71,10 @@ def record_audio(filename="temp.wav"):
                 
                 # Print a tiny visual indicator so the user knows he hears them
                 if volume > silence_threshold:
-                    print(">>> Hearing you...", end='\r', flush=True)
+                    if not started_talking:
+                        print(">>> Hearing you...", end='\r', flush=True)
+                        if on_speech_start:
+                            on_speech_start()
                     started_talking = True
                     silent_chunks = 0
                 else:
@@ -82,14 +85,14 @@ def record_audio(filename="temp.wav"):
                 if started_talking or len(recorded_chunks) < 4:
                     recorded_chunks.append(mydata)
                     
-                # If silent for 1.5 seconds (6 chunks) after speaking, stop immediately!
-                if started_talking and silent_chunks >= 6:
-                    print("\nProcessing speech...")
+                # If silent for 0.75 seconds (3 chunks) after speaking, stop immediately!
+                if started_talking and silent_chunks >= 3:
+                    # print("\\nProcessing speech...")
                     break
                     
                 # Safety timeout (20 seconds max)
                 if len(recorded_chunks) > 80:
-                    print("\nProcessing speech...")
+                    # print("\\nProcessing speech...")
                     break
                     
         full_audio = np.concatenate(recorded_chunks, axis=0)
@@ -99,9 +102,9 @@ def record_audio(filename="temp.wav"):
         print(f"Error recording audio: {e}")
         return None
 
-def listen():
+def listen(on_speech_start=None):
     """Records audio dynamically and returns the transcribed text."""
-    audio_file = record_audio()
+    audio_file = record_audio(on_speech_start=on_speech_start)
     if not audio_file:
         return None  # Hardware failure!
     
@@ -110,7 +113,7 @@ def listen():
         with sr.AudioFile(audio_file) as source:
             print("Processing speech...")
             audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data)
+            text = recognizer.recognize_google(audio_data, language="en-US")
             print(f"You said: {text}")
             return text.lower()
     except sr.UnknownValueError:
