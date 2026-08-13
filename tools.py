@@ -6,52 +6,86 @@ import time
 import pyautogui
 from AppOpener import open as open_app
 
+# CRITICAL FIX: Disable failsafe so mouse resting in corner doesn't crash the tools!
+pyautogui.FAILSAFE = False
+
+def _minimize_jarvis():
+    """Forces the Jarvis UI to minimize via WebSocket so the newly opened app gains absolute focus!"""
+    try:
+        import requests
+        requests.get("http://localhost:8000/api/minimize", timeout=2)
+        import time
+        time.sleep(0.4) # Give UI time to minimize
+    except:
+        pass
+
 def open_website(url):
-    """Opens a specific URL directly using Windows system commands."""
+    """Opens a specific URL directly."""
     if not url.startswith("http"):
         url = "https://" + url
     
-    # Run silently via OS. This doesn't care about mouse movement or focused windows!
-    try:
-        import subprocess
-        # Tries default browser first
-        subprocess.run(f'start "" "{url}"', shell=True)
-    except:
-        pass
+    import webbrowser
+    import time
+    import pyautogui
     
-    return f"Successfully opened {url}."
+    try:
+        _minimize_jarvis() # Definitive focus fix
+        pyautogui.press('alt') # Focus hack
+        time.sleep(0.1)
+        
+        # webbrowser.open natively handles registry and brings to front better than 'start'
+        success = webbrowser.open(url)
+        
+        if not success:
+            import subprocess
+            subprocess.Popen(f'start msedge "{url}"', shell=True)
+            
+        return f"Successfully opened {url}."
+    except Exception as e:
+        return "Failed to run terminal command."
 
 def search_youtube(query):
-    """Searches YouTube directly using Windows system commands."""
+    """Searches YouTube directly."""
     encoded_query = urllib.parse.quote(query)
     url = f"https://www.youtube.com/results?search_query={encoded_query}"
     
+    import webbrowser
+    import time
+    import pyautogui
+    
     try:
-        import subprocess
-        # Tries default browser first
-        subprocess.run(f'start "" "{url}"', shell=True)
-    except:
-        pass
+        _minimize_jarvis()
+        pyautogui.press('alt')
+        time.sleep(0.1)
         
-    return f"Successfully searched YouTube for: {query}"
+        success = webbrowser.open(url)
+        if not success:
+            import subprocess
+            subprocess.Popen(f'start msedge "{url}"', shell=True)
+            
+        return f"Successfully searched YouTube for: {query}"
+    except Exception as e:
+        return f"Failed to search YouTube: {e}"
 
 def open_application(app_name):
-    """Opens a local Windows application robustly."""
+    """Opens an application exactly like FatihMakes' Jarvis by visually typing in the start menu!"""
     try:
-        # AppOpener automatically finds and opens apps from Windows Start Menu
-        open_app(app_name, match_closest=True)
-        return f"Successfully opened {app_name}."
+        import pyautogui
+        import time
+        # The true FatihMakes method: Visually open start menu and type it!
+        pyautogui.hotkey('ctrl', 'esc') # 100% reliable way to open Start Menu
+        time.sleep(1.0) # Wait for Start Menu to fully open and animate
+        pyautogui.write(app_name, interval=0.08)
+        time.sleep(0.8) # Wait for Windows Search to find it
+        pyautogui.press('enter')
+        
+        # MINIMIZE AFTER LAUNCH: This forces Windows to give foreground focus to the newly launched app!
+        time.sleep(1.5) 
+        _minimize_jarvis()
+        
+        return f"Successfully executed visual start menu search for {app_name}."
     except Exception as e:
-        # Fallback to pure pyautogui if somehow AppOpener fails
-        try:
-            pyautogui.press("win")
-            time.sleep(0.5)
-            pyautogui.write(app_name, interval=0.05)
-            time.sleep(0.5)
-            pyautogui.press("enter")
-            return f"Successfully opened {app_name} via keyboard fallback."
-        except Exception as fallback_e:
-            return f"Failed to open {app_name}: {e}. Fallback also failed: {fallback_e}"
+        return f"Failed to open {app_name}: {e}"
 
 def get_time_and_date():
     """Returns the current date and time."""
@@ -71,8 +105,20 @@ def run_terminal_command(command):
     except Exception as e:
         return f"Error executing command: {e}"
 
+def get_system_status():
+    """Checks the computer's CPU and RAM usage to report system health."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=0.5)
+        ram = psutil.virtual_memory().percent
+        return f"System Status: CPU Usage is {cpu}%, RAM Usage is {ram}%."
+    except Exception as e:
+        return "Failed to read system status."
+
 import urllib.request
 import xml.etree.ElementTree as ET
+
+SEEN_NEWS = set()
 
 def search_news(query="gündem"):
     """Searches Google News for a specific topic or gets general top news."""
@@ -94,16 +140,20 @@ def search_news(query="gündem"):
             
         root = ET.fromstring(xml_data)
         headlines = []
-        for item in root.findall('./channel/item')[:10]: # Increased to 10 news items
+        for item in root.findall('./channel/item'):
             title = item.find('title').text
-            headlines.append(f"- {title}")
+            if title not in SEEN_NEWS:
+                headlines.append(f"- {title}")
+                SEEN_NEWS.add(title)
+            if len(headlines) >= 7: # Return top 7 unseen news
+                break
             
         if not headlines:
-            return f"{query} hakkında yeni bir haber bulunamadı."
+            return f"No unread news found for {query}."
             
         return f"{topic_name}:\n" + "\n".join(headlines)
     except Exception as e:
-        return f"Haberler alınırken bir hata oluştu: {e}"
+        return f"Error fetching news: {e}"
 
 import pyautogui
 import time
@@ -130,7 +180,35 @@ def type_text(text):
     except Exception as e:
         return f"Error typing text: {e}"
 
-# This maps the tool names from Gemini to the actual Python functions
+def take_screenshot():
+    """Takes a screenshot of the screen so Jarvis can 'see' what the user is doing."""
+    try:
+        import pyautogui
+        pyautogui.screenshot("screen.png")
+        return "Screenshot taken successfully and attached to your visual sensors (I added it to the prompt)."
+    except Exception as e:
+        return f"Failed to take screenshot: {e}"
+
+def search_web(query):
+    """Searches the internet for information, such as finding Steam App IDs or general facts."""
+    try:
+        import urllib.request, urllib.parse, re
+        encoded_query = urllib.parse.quote(query)
+        req = urllib.request.Request(f"https://html.duckduckgo.com/html/?q={encoded_query}", headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req) as response:
+            html = response.read().decode('utf-8')
+        # Extract snippets from DuckDuckGo Lite
+        snippets = re.findall(r'class="result__snippet[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
+        clean_snippets = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets]
+        if clean_snippets:
+            return f"Web Search Results for '{query}':\n- " + "\n- ".join(clean_snippets[:3])
+        return "No internet results found."
+    except Exception as e:
+        return f"Web search error: {e}"
+
+# ---------------------------------------------------------
+# TOOL DISPATCHER MAP
+# ---------------------------------------------------------
 TOOL_MAP = {
     "open_website": open_website,
     "search_youtube": search_youtube,
@@ -139,7 +217,10 @@ TOOL_MAP = {
     "run_terminal_command": run_terminal_command,
     "search_news": search_news,
     "press_keys": press_keys,
-    "type_text": type_text
+    "type_text": type_text,
+    "get_system_status": get_system_status,
+    "take_screenshot": take_screenshot,
+    "search_web": search_web
 }
 
 # The JSON schema passed to Gemini to teach it about our tools
@@ -176,7 +257,7 @@ GEMINI_TOOLS = [
             },
             {
                 "name": "open_application",
-                "description": "Opens a local Windows application on the user's computer (e.g. calculator, notepad, spotify).",
+                "description": "Opens ANY local Windows application, game, or software on the user's computer. Use this whenever the user asks you to open a program, game, or app. It has full OS access to open absolutely anything.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
@@ -249,6 +330,27 @@ GEMINI_TOOLS = [
                         }
                     },
                     "required": ["text"]
+                }
+            },
+            {
+                "name": "take_screenshot",
+                "description": "Takes a screenshot of the user's computer screen and allows you to literally SEE what is on the screen right now. Use this whenever the user asks 'What is on my screen?', 'What am I looking at?', or asks for help with a real-life project on their computer.",
+                "parameters": {
+                    "type": "OBJECT"
+                }
+            },
+            {
+                "name": "search_web",
+                "description": "Searches the live internet (DuckDuckGo) to find facts, news, or most importantly, Steam App IDs for installing games.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "query": {
+                            "type": "STRING",
+                            "description": "The search query (e.g. 'Rainbow Six Siege steam app id' or 'Capital of France')"
+                        }
+                    },
+                    "required": ["query"]
                 }
             }
         ]

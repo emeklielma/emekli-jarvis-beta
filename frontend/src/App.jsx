@@ -20,6 +20,19 @@ function App() {
     scrollToBottom()
   }, [messages])
 
+  // F11 Fullscreen support for pywebview
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'F11') {
+        if (window.pywebview) {
+          window.pywebview.api.toggle_fullscreen();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   // Fake system monitor jitter for the techy UI look!
   useEffect(() => {
     const interval = setInterval(() => {
@@ -57,7 +70,16 @@ function App() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'status') {
+        if (data.type === 'action' && data.value === 'minimize') {
+          try {
+            if (window.pywebview) {
+              window.pywebview.api.minimize();
+            } else {
+              const { ipcRenderer } = window.require('electron');
+              ipcRenderer.send('minimize-window');
+            }
+          } catch (err) {}
+        } else if (data.type === 'status') {
           setStatus(data.value);
         } else if (data.type === 'log') {
           setMessages(prev => [...prev, { sender: data.sender, text: data.text }]);
@@ -184,21 +206,31 @@ function App() {
         </div>
 
         {/* CENTER PANEL */}
-        <div className="panel center-panel">
+        <div className="panel center-panel hud-box">
+          <div className="hud-corner top-left"></div>
+          <div className="hud-corner top-right"></div>
+          <div className="hud-corner bottom-left"></div>
+          <div className="hud-corner bottom-right"></div>
+          
+          <div className="hud-coordinates">
+            SYS.LOC: 34.0522° N, 118.2437° W <br/>
+            ALT: 1,234 FT | V: 0.00 Mach <br/>
+            TARGET: ACQUIRED
+          </div>
+
           <h1 className="jarvis-title">JARVIS</h1>
           <h3 className="jarvis-subtitle">Just A Rather Very Intelligent System</h3>
           
-          <div className="radar-container">
-            <div className={`radar-ring ring-1 ${status}`}></div>
-            <div className={`radar-ring ring-2 ${status}`}></div>
-            <div className={`radar-ring ring-3 ${status}`}></div>
-            <div className="radar-center">JARVIS</div>
+          <div className={`arc-reactor ${status}`}>
+            <div className="arc-core"></div>
+            <div className="arc-ring ring-outer"></div>
+            <div className="arc-ring ring-mid"></div>
+            <div className="arc-ring ring-inner"></div>
+            <div className="arc-ring ring-ultra-inner"></div>
             
             <div className="radar-status">
               <span className="blink">●</span> {status}
             </div>
-            <div className="radar-axis-h"></div>
-            <div className="radar-axis-v"></div>
           </div>
         </div>
 

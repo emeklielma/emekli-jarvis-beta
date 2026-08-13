@@ -179,6 +179,11 @@ def chat(request: ChatRequest):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/minimize")
+def minimize_ui():
+    ui_queue.put({"type": "action", "value": "minimize"})
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     import uvicorn
     print("=======================================")

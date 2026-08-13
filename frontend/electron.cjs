@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -14,6 +14,16 @@ function createWindow() {
   });
 
   win.loadURL('http://localhost:5173');
+
+  // F11 Fullscreen Toggle
+  globalShortcut.register('F11', () => {
+    win.setFullScreen(!win.isFullScreen());
+  });
+
+  // Native window minimize via IPC
+  ipcMain.on('minimize-window', () => {
+    win.minimize();
+  });
 }
 
 app.whenReady().then(createWindow);

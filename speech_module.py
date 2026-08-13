@@ -85,8 +85,8 @@ def record_audio(filename="temp.wav", on_speech_start=None):
                 if started_talking or len(recorded_chunks) < 4:
                     recorded_chunks.append(mydata)
                     
-                # If silent for 0.75 seconds (3 chunks) after speaking, stop immediately!
-                if started_talking and silent_chunks >= 3:
+                # If silent for 0.50 seconds (2 chunks) after speaking, stop immediately!
+                if started_talking and silent_chunks >= 2:
                     # print("\\nProcessing speech...")
                     break
                     
