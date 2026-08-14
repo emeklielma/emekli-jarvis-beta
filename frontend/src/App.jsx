@@ -367,8 +367,14 @@ function App() {
           <div className="hud-corner bottom-left"></div>
           <div className="hud-corner bottom-right"></div>
           
-          <h1 className="jarvis-title">J.A.R.V.I.S</h1>
-          <div className="jarvis-subtitle">ARTIFICIAL INTELLIGENCE NETWORK</div>
+          <div className="hud-coordinates">
+            SYS.LOC: 34.0522° N, 118.2437° W <br/>
+            ALT: 1,234 FT | V: 0.00 Mach <br/>
+            TARGET: ACQUIRED
+          </div>
+
+          <h1 className="jarvis-title">JARVIS</h1>
+          <h3 className="jarvis-subtitle">Just A Rather Very Intelligent System</h3>
 
           {protocol === 'satellite' ? (
             <div className="radar-container">
@@ -379,23 +385,18 @@ function App() {
               <div className="radar-text">SATELLITE UPLINK ESTABLISHED<br/>SCANNING...</div>
             </div>
           ) : (
-            <div className="arc-reactor">
-              <div className="core"></div>
-              <div className="ring ring1"></div>
-              <div className="ring ring2"></div>
-              <div className="ring ring3"></div>
+            <div className={`arc-reactor ${status}`}>
+              <div className="arc-core"></div>
+              <div className="arc-ring ring-outer"></div>
+              <div className="arc-ring ring-mid"></div>
+              <div className="arc-ring ring-inner"></div>
+              <div className="arc-ring ring-ultra-inner"></div>
+              
+              <div className="radar-status">
+                <span className="blink">●</span> {status}
+              </div>
             </div>
           )}
-
-          <div className="network-nodes" style={{marginTop: '40px', display: 'flex', gap: '20px', justifyContent: 'center'}}>
-            <div className="node active"></div>
-            <div className="node active"></div>
-            <div className="node"></div>
-          </div>
-          
-          <div className="radar-status" style={{marginTop: '20px', textAlign: 'center', color: 'var(--theme-color)'}}>
-            <span className="blink">●</span> {status}
-          </div>
         </div>
 
         {/* RIGHT PANEL */}
