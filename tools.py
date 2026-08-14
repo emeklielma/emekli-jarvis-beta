@@ -342,7 +342,7 @@ GEMINI_TOOLS = [
                     "properties": {
                         "protocol_name": {
                             "type": "STRING",
-                            "description": "The protocol to trigger. Valid options: 'lockdown', 'party', 'normal'"
+                            "description": "The protocol to trigger. Valid options: 'lockdown', 'party', 'normal', 'decryption', 'destruct', 'satellite'"
                         }
                     },
                     "required": ["protocol_name"]

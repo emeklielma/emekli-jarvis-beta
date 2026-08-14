@@ -25,8 +25,26 @@ function App() {
 
   const [isBooting, setIsBooting] = useState(true)
   const [bootText, setBootText] = useState('')
-  const [protocol, setProtocol] = useState('normal') // normal, lockdown, party
+  const [protocol, setProtocol] = useState('normal') // normal, lockdown, party, decryption, destruct, satellite
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [countdown, setCountdown] = useState(null)
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      // Trigger minimize at 0
+      setCountdown(null);
+      setProtocol('normal');
+      setCurrentTheme(themes[0]);
+      try {
+        if (window.pywebview) window.pywebview.api.minimize();
+        else fetch('http://localhost:8000/api/minimize');
+      } catch (err) {}
+      return;
+    }
+    const timer = setTimeout(() => setCountdown(prev => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
 
   useEffect(() => {
     const bootSteps = [
@@ -139,8 +157,16 @@ function App() {
              setCurrentTheme(themes.find(t => t.name === 'Red') || themes[1]);
           } else if (data.protocol_name === 'normal') {
              setCurrentTheme(themes[0]);
+             setCountdown(null);
           } else if (data.protocol_name === 'party') {
              setCurrentTheme(themes.find(t => t.name === 'Purple') || themes[4]);
+          } else if (data.protocol_name === 'decryption') {
+             setCurrentTheme(themes.find(t => t.name === 'Green') || themes[3]);
+          } else if (data.protocol_name === 'destruct') {
+             setCurrentTheme(themes.find(t => t.name === 'Red') || themes[1]);
+             setCountdown(10);
+          } else if (data.protocol_name === 'satellite') {
+             setCurrentTheme(themes.find(t => t.name === 'Cyan') || themes[0]);
           }
         } else if (data.type === 'vitals') {
           setCpuUsage(data.cpu);
@@ -238,7 +264,21 @@ function App() {
   }
 
   return (
-    <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''}`}>
+    <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''} ${protocol === 'decryption' ? 'matrix-mode' : ''}`}>
+      
+      {/* HUD CROSSHAIRS */}
+      <div className="hud-crosshair top-left"></div>
+      <div className="hud-crosshair top-right"></div>
+      <div className="hud-crosshair bottom-left"></div>
+      <div className="hud-crosshair bottom-right"></div>
+
+      {countdown !== null && (
+        <div className="destruct-overlay">
+          <div className="destruct-text">SELF DESTRUCT IN</div>
+          <div className="destruct-timer">{countdown}</div>
+        </div>
+      )}
+
       <div className="top-bar">
         <div>JARVIS - MARK XLIX</div>
         <div className="top-right">
@@ -327,25 +367,34 @@ function App() {
           <div className="hud-corner bottom-left"></div>
           <div className="hud-corner bottom-right"></div>
           
-          <div className="hud-coordinates">
-            SYS.LOC: 34.0522° N, 118.2437° W <br/>
-            ALT: 1,234 FT | V: 0.00 Mach <br/>
-            TARGET: ACQUIRED
-          </div>
+          <h1 className="jarvis-title">J.A.R.V.I.S</h1>
+          <div className="jarvis-subtitle">ARTIFICIAL INTELLIGENCE NETWORK</div>
 
-          <h1 className="jarvis-title">JARVIS</h1>
-          <h3 className="jarvis-subtitle">Just A Rather Very Intelligent System</h3>
-          
-          <div className={`arc-reactor ${status}`}>
-            <div className="arc-core"></div>
-            <div className="arc-ring ring-outer"></div>
-            <div className="arc-ring ring-mid"></div>
-            <div className="arc-ring ring-inner"></div>
-            <div className="arc-ring ring-ultra-inner"></div>
-            
-            <div className="radar-status">
-              <span className="blink">●</span> {status}
+          {protocol === 'satellite' ? (
+            <div className="radar-container">
+              <div className="radar-circle"></div>
+              <div className="radar-line"></div>
+              <div className="radar-target" style={{top: '30%', left: '40%'}}></div>
+              <div className="radar-target" style={{top: '60%', left: '70%'}}></div>
+              <div className="radar-text">SATELLITE UPLINK ESTABLISHED<br/>SCANNING...</div>
             </div>
+          ) : (
+            <div className="arc-reactor">
+              <div className="core"></div>
+              <div className="ring ring1"></div>
+              <div className="ring ring2"></div>
+              <div className="ring ring3"></div>
+            </div>
+          )}
+
+          <div className="network-nodes" style={{marginTop: '40px', display: 'flex', gap: '20px', justifyContent: 'center'}}>
+            <div className="node active"></div>
+            <div className="node active"></div>
+            <div className="node"></div>
+          </div>
+          
+          <div className="radar-status" style={{marginTop: '20px', textAlign: 'center', color: 'var(--theme-color)'}}>
+            <span className="blink">●</span> {status}
           </div>
         </div>
 
