@@ -85,7 +85,20 @@ def generate_response(prompt):
             
             if response.status_code == 200:
                 data = response.json()
-                part = data['candidates'][0]['content']['parts'][0]
+                
+                candidates = data.get('candidates', [])
+                if not candidates:
+                    return "Google API returned an empty response. Please try again."
+                
+                content = candidates[0].get('content', {})
+                if 'parts' not in content:
+                    # Check for safety blocks
+                    finish_reason = candidates[0].get('finishReason', '')
+                    if finish_reason == 'SAFETY':
+                        return "I'm sorry Sir, my safety protocols prevent me from fulfilling that request."
+                    return f"API returned no parts. Finish reason: {finish_reason}"
+                
+                part = content['parts'][0]
                 
                 # Check if Gemini decided to call a function!
                 if 'functionCall' in part:
