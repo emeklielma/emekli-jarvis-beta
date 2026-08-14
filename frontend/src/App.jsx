@@ -23,6 +23,32 @@ function App() {
   const chatContainerRef = useRef(null)
   const currentAudioRef = useRef(null)
 
+  const [isBooting, setIsBooting] = useState(true)
+  const [bootText, setBootText] = useState('')
+  const [protocol, setProtocol] = useState('normal') // normal, lockdown, party
+  const [isSpeaking, setIsSpeaking] = useState(false)
+
+  useEffect(() => {
+    const bootSteps = [
+      "INITIATING MARK L PROTOCOLS...",
+      "LOADING AI CORE...",
+      "CALIBRATING NEURAL NETWORKS...",
+      "CONNECTING TO SATELLITE UPLINK...",
+      "AUDIO DRIVERS ONLINE.",
+      "WELCOME HOME, SIR."
+    ];
+    let step = 0;
+    const interval = setInterval(() => {
+      setBootText(prev => prev + "\n" + bootSteps[step]);
+      step++;
+      if (step >= bootSteps.length) {
+        clearInterval(interval);
+        setTimeout(() => setIsBooting(false), 1200);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     document.documentElement.style.setProperty('--theme-color', currentTheme.color)
     document.documentElement.style.setProperty('--theme-color-rgb', currentTheme.rgb)
@@ -57,15 +83,7 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  // Fake system monitor jitter for the techy UI look!
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCpuUsage(prev => Math.max(10, Math.min(90, prev + (Math.random() * 10 - 5))))
-      setRamUsage(prev => Math.max(30, Math.min(80, prev + (Math.random() * 4 - 2))))
-      setNetSpeed(prev => Math.max(1, Math.min(50, prev + (Math.random() * 20 - 10))))
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [])
+  // Removed fake system monitor jitter - now using real data from python backend!
 
   // Lightning-fast Neural Voice playback!
   const speak = (text, audioUrl) => {
@@ -79,10 +97,14 @@ function App() {
     if (audioUrl) {
       const audio = new Audio(audioUrl);
       currentAudioRef.current = audio;
+      setIsSpeaking(true);
+      audio.onended = () => setIsSpeaking(false);
       audio.play();
     } else if ('speechSynthesis' in window) {
       // Fallback
       const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setIsSpeaking(false);
+      setIsSpeaking(true);
       window.speechSynthesis.speak(utterance);
     }
   }
@@ -111,6 +133,19 @@ function App() {
               ipcRenderer.send('minimize-window');
             }
           } catch (err) {}
+        } else if (data.type === 'action' && data.value === 'protocol') {
+          setProtocol(data.protocol_name);
+          if (data.protocol_name === 'lockdown') {
+             setCurrentTheme(themes.find(t => t.name === 'Red') || themes[1]);
+          } else if (data.protocol_name === 'normal') {
+             setCurrentTheme(themes[0]);
+          } else if (data.protocol_name === 'party') {
+             setCurrentTheme(themes.find(t => t.name === 'Purple') || themes[4]);
+          }
+        } else if (data.type === 'vitals') {
+          setCpuUsage(data.cpu);
+          setRamUsage(data.ram);
+          setNetSpeed(data.net);
         } else if (data.type === 'status') {
           setStatus(data.value);
         } else if (data.type === 'log') {
@@ -148,6 +183,7 @@ function App() {
   }
 
   const interrupt = () => {
+    setIsSpeaking(false);
     window.speechSynthesis.cancel();
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -189,8 +225,20 @@ function App() {
     }
   }
 
+  if (isBooting) {
+    return (
+      <div className="boot-screen" style={{
+        height: '100vh', width: '100vw', backgroundColor: '#000', 
+        color: 'var(--theme-color)', fontFamily: 'monospace', padding: '50px', 
+        fontSize: '1.2rem', whiteSpace: 'pre-line', textShadow: '0 0 10px var(--theme-color)'
+      }}>
+        {bootText}
+      </div>
+    )
+  }
+
   return (
-    <div className="dashboard">
+    <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''}`}>
       <div className="top-bar">
         <div>JARVIS - MARK XLIX</div>
         <div className="top-right">
@@ -255,8 +303,21 @@ function App() {
           <div className="status-badges">
             <div className="badge active">AI CORE<br/>ACTIVE</div>
             <div className="badge active">SEC<br/>CLEARED</div>
-            <div className="badge outline">PROTOCOL<br/>XLIX</div>
+            <div className={`badge ${protocol !== 'normal' ? 'active' : 'outline'}`} style={{color: protocol === 'lockdown' ? 'red' : ''}}>
+              PROTOCOL<br/>{protocol.toUpperCase()}
+            </div>
           </div>
+          
+          {/* Audio Visualizer */}
+          {isSpeaking && (
+            <div className="audio-visualizer" style={{marginTop: '20px', display: 'flex', gap: '5px', justifyContent: 'center'}}>
+              <div className="bar bar1"></div>
+              <div className="bar bar2"></div>
+              <div className="bar bar3"></div>
+              <div className="bar bar4"></div>
+              <div className="bar bar5"></div>
+            </div>
+          )}
         </div>
 
         {/* CENTER PANEL */}

@@ -464,3 +464,40 @@ body {
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: var(--cyan-dim); }
+
+/* SECURITY PROTOCOLS */
+.dashboard.lockdown-mode {
+  animation: lockdown-pulse 2s infinite;
+  border: 5px solid red;
+}
+@keyframes lockdown-pulse {
+  0% { box-shadow: inset 0 0 50px rgba(255, 0, 0, 0.2); }
+  50% { box-shadow: inset 0 0 150px rgba(255, 0, 0, 0.8); }
+  100% { box-shadow: inset 0 0 50px rgba(255, 0, 0, 0.2); }
+}
+
+.dashboard.party-mode {
+  animation: party-pulse 1s infinite alternate;
+}
+@keyframes party-pulse {
+  0% { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+
+/* AUDIO VISUALIZER */
+.audio-visualizer .bar {
+  width: 10px;
+  background-color: var(--theme-color);
+  animation: equalize 0.5s infinite;
+  box-shadow: 0 0 10px var(--theme-color);
+}
+.audio-visualizer .bar1 { height: 10px; animation-delay: 0.1s; }
+.audio-visualizer .bar2 { height: 20px; animation-delay: 0.2s; }
+.audio-visualizer .bar3 { height: 30px; animation-delay: 0.3s; }
+.audio-visualizer .bar4 { height: 20px; animation-delay: 0.4s; }
+.audio-visualizer .bar5 { height: 10px; animation-delay: 0.5s; }
+
+@keyframes equalize {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(3); }
+}

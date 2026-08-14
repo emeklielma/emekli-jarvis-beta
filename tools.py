@@ -222,6 +222,53 @@ def search_web(query):
     except Exception as e:
         return f"Web search error: {e}"
 
+def control_media(action):
+    """Controls media playback and volume."""
+    try:
+        import pyautogui
+        valid_actions = ['playpause', 'nexttrack', 'prevtrack', 'volumemute', 'volumeup', 'volumedown']
+        if action in valid_actions:
+            if action in ['volumeup', 'volumedown']:
+                pyautogui.press([action]*5)
+            else:
+                pyautogui.press(action)
+            return f"Executed media control: {action}"
+        else:
+            return f"Invalid action: {action}. Must be one of {valid_actions}"
+    except Exception as e:
+        return f"Failed to execute media control: {e}"
+
+def get_weather():
+    """Gets the current local weather using IP geolocation."""
+    try:
+        import requests
+        r = requests.get('https://wttr.in/?format=j1', timeout=10).json()
+        temp = r['current_condition'][0]['temp_C']
+        desc = r['current_condition'][0]['weatherDesc'][0]['value']
+        location = r['nearest_area'][0]['areaName'][0]['value']
+        return f"The weather in {location} is currently {temp}°C and {desc}."
+    except Exception as e:
+        return f"Failed to get weather: {e}"
+
+def send_notification(title, message):
+    """Sends a native Windows popup notification."""
+    try:
+        from win10toast import ToastNotifier
+        toaster = ToastNotifier()
+        toaster.show_toast(title, message, duration=5, threaded=True)
+        return "Notification sent successfully."
+    except Exception as e:
+        return f"Failed to send notification: {e}"
+
+def trigger_protocol(protocol_name):
+    """Triggers a special Jarvis UI protocol."""
+    try:
+        import requests
+        requests.get(f"http://localhost:8000/api/protocol/{protocol_name}", timeout=2)
+        return f"Protocol '{protocol_name}' activated."
+    except Exception as e:
+        return f"Failed to activate protocol: {e}"
+
 # ---------------------------------------------------------
 # TOOL DISPATCHER MAP
 # ---------------------------------------------------------
@@ -236,13 +283,71 @@ TOOL_MAP = {
     "type_text": type_text,
     "get_system_status": get_system_status,
     "take_screenshot": take_screenshot,
-    "search_web": search_web
+    "search_web": search_web,
+    "control_media": control_media,
+    "get_weather": get_weather,
+    "send_notification": send_notification,
+    "trigger_protocol": trigger_protocol
 }
 
 # The JSON schema passed to Gemini to teach it about our tools
 GEMINI_TOOLS = [
     {
         "functionDeclarations": [
+            {
+                "name": "control_media",
+                "description": "Controls Windows media playback and volume. Use this whenever the user asks to change the volume or control music.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "action": {
+                            "type": "STRING",
+                            "description": "The action to perform. Valid options are: 'playpause', 'nexttrack', 'prevtrack', 'volumemute', 'volumeup', 'volumedown'"
+                        }
+                    },
+                    "required": ["action"]
+                }
+            },
+            {
+                "name": "get_weather",
+                "description": "Gets the current local weather and temperature based on the user's location.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "send_notification",
+                "description": "Sends a native Windows desktop toast notification to the user. Use this to alert the user of finished background tasks or important warnings.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "title": {
+                            "type": "STRING",
+                            "description": "The title of the notification."
+                        },
+                        "message": {
+                            "type": "STRING",
+                            "description": "The message body of the notification."
+                        }
+                    },
+                    "required": ["title", "message"]
+                }
+            },
+            {
+                "name": "trigger_protocol",
+                "description": "Triggers a special visual protocol on the Jarvis UI. Use this when the user asks for 'lockdown' or 'house party' mode.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "protocol_name": {
+                            "type": "STRING",
+                            "description": "The protocol to trigger. Valid options: 'lockdown', 'party', 'normal'"
+                        }
+                    },
+                    "required": ["protocol_name"]
+                }
+            },
             {
                 "name": "open_website",
                 "description": "Opens a specific website URL in the user's default browser.",

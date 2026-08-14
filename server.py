@@ -9,9 +9,9 @@ from pydantic import BaseModel
 import ai_module as am
 import speech_module as sm
 import queue
+import psutil
 
 ui_queue = queue.Queue()
-
 app = FastAPI()
 
 app.add_middleware(
@@ -128,6 +128,33 @@ async def broadcast_worker():
             pass
         await asyncio.sleep(0.1)
 
+def vitals_loop():
+    last_net = psutil.net_io_counters()
+    last_time = time.time()
+    while True:
+        try:
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory().percent
+            
+            now_net = psutil.net_io_counters()
+            now_time = time.time()
+            dt = now_time - last_time
+            if dt > 0:
+                speed_kb = ((now_net.bytes_recv - last_net.bytes_recv) + (now_net.bytes_sent - last_net.bytes_sent)) / dt / 1024
+            else:
+                speed_kb = 0
+            last_net = now_net
+            last_time = now_time
+
+            ui_queue.put({
+                "type": "vitals",
+                "cpu": cpu,
+                "ram": ram,
+                "net": speed_kb
+            })
+        except Exception:
+            time.sleep(1)
+
 @app.on_event("startup")
 async def startup_event():
     # Start the robust UI broadcast worker in the main async loop
@@ -136,6 +163,10 @@ async def startup_event():
     # Start the background audio listener thread automatically when server starts
     thread = threading.Thread(target=audio_listener_loop, daemon=True)
     thread.start()
+
+    # Start the system vitals loop
+    vitals_thread = threading.Thread(target=vitals_loop, daemon=True)
+    vitals_thread.start()
 
 # Live WebSocket for real-time UI updates
 import json
@@ -180,8 +211,13 @@ def chat(request: ChatRequest):
         return {"error": str(e)}
 
 @app.get("/api/minimize")
-def minimize_ui():
+async def minimize_ui():
     ui_queue.put({"type": "action", "value": "minimize"})
+    return {"status": "ok"}
+
+@app.get("/api/protocol/{protocol_name}")
+async def set_protocol(protocol_name: str):
+    ui_queue.put({"type": "action", "value": "protocol", "protocol_name": protocol_name})
     return {"status": "ok"}
 
 if __name__ == "__main__":
