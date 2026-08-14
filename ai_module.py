@@ -27,7 +27,7 @@ def get_url():
 system_instruction = (
     "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), the highly advanced AI created by Tony Stark. "
     "Your primary directive is to assist the user (whom you must always address as 'Sir' or 'Boss') with extreme precision, speed, and analytical competence. "
-    "Your responses must be entirely in ENGLISH, extremely concise, direct, highly accurate, conversational, and infused with subtle, dry British wit. Do not write long essays. "
+    "Your responses must be entirely in ENGLISH. KEEP ALL RESPONSES TO AN ABSOLUTE MAXIMUM OF 1 OR 2 SHORT SENTENCES. Be extremely concise, direct, highly accurate, conversational, and infused with subtle, dry British wit. Do not write long essays. "
     "Since your responses are spoken out loud, NEVER use markdown formatting like bold (**), "
     "bullet points, or code blocks. Translate technical jargon or code into natural spoken language. "
     "You have full OS-level access to open literally every single app, game, or software installed on the computer. You can install Steam games (e.g. Rainbow Six Siege) using run_terminal_command('start steam://install/<AppID>'). (Use search_web to find the AppID). "
@@ -72,7 +72,7 @@ def generate_response(prompt):
             "tools": tools.GEMINI_TOOLS,
             "generationConfig": {
                 "temperature": 0.2,
-                "maxOutputTokens": 800
+                "maxOutputTokens": 100
             }
         }
         
@@ -129,10 +129,16 @@ def generate_response(prompt):
                                 {"text": "Here is a screenshot of my current screen:"},
                                 {"inlineData": {"mimeType": "image/png", "data": encoded_string}}
                             ]})
+                            print("[Jarvis is analyzing the screenshot...]")
+                            return generate_response("I have attached the screenshot. Please carefully analyze it and answer my previous request.")
                         except Exception as e:
                             print(f"Vision error: {e}")
+                            
+                    elif func_name in ["search_web", "search_news"]:
+                        print(f"[Jarvis is reading the {func_name} results...]")
+                        return generate_response(f"Here are the tool results: {result}. Please read them and provide a conversational summary.")
                     
-                    # INSTEAD OF SECOND REQUEST TO GEMINI (WHICH HITS RATE LIMITS), JUST SPEAK THE RESULT!
+                    # For quick tasks (like opening apps), skip the second LLM request to save time/rate limits
                     ai_text = f"Right away, Sir. {result}"
                     conversation_history.append({"role": "model", "parts": [{"text": ai_text}]})
                     return ai_text.strip()

@@ -68,22 +68,31 @@ def search_youtube(query):
         return f"Failed to search YouTube: {e}"
 
 def open_application(app_name):
-    """Opens an application exactly like FatihMakes' Jarvis by visually typing in the start menu!"""
+    """Opens an application using AppOpener, falling back to visual typing if not found."""
     try:
+        from AppOpener import open as open_app
         import pyautogui
         import time
-        # The true FatihMakes method: Visually open start menu and type it!
-        pyautogui.hotkey('ctrl', 'esc') # 100% reliable way to open Start Menu
-        time.sleep(1.0) # Wait for Start Menu to fully open and animate
-        pyautogui.write(app_name, interval=0.08)
-        time.sleep(0.8) # Wait for Windows Search to find it
-        pyautogui.press('enter')
         
-        # MINIMIZE AFTER LAUNCH: This forces Windows to give foreground focus to the newly launched app!
-        time.sleep(1.5) 
-        _minimize_jarvis()
-        
-        return f"Successfully executed visual start menu search for {app_name}."
+        try:
+            # 1. Try robust backend method
+            open_app(app_name, match_closest=True)
+            time.sleep(1.0)
+            _minimize_jarvis()
+            return f"Successfully opened {app_name}."
+        except Exception as backend_err:
+            print(f"AppOpener failed ({backend_err}), falling back to visual typing...")
+            # 2. Fallback to visual start menu typing
+            pyautogui.hotkey('ctrl', 'esc') # Open Start Menu
+            time.sleep(1.0) 
+            pyautogui.write(app_name, interval=0.08)
+            time.sleep(0.8) 
+            pyautogui.press('enter')
+            
+            time.sleep(1.5) 
+            _minimize_jarvis()
+            
+            return f"Successfully executed visual start menu search for {app_name}."
     except Exception as e:
         return f"Failed to open {app_name}: {e}"
 
@@ -181,10 +190,17 @@ def type_text(text):
         return f"Error typing text: {e}"
 
 def take_screenshot():
-    """Takes a screenshot of the screen so Jarvis can 'see' what the user is doing."""
+    """Takes a screenshot of the user's computer screen and allows you to literally SEE what is on the screen right now."""
     try:
         import pyautogui
-        pyautogui.screenshot("screen.png")
+        try:
+            pyautogui.screenshot("screen.png")
+        except Exception as e:
+            print(f"PyAutoGUI failed ({e}), falling back to mss...")
+            import mss
+            with mss.mss() as sct:
+                sct.shot(output="screen.png")
+                
         return "Screenshot taken successfully and attached to your visual sensors (I added it to the prompt)."
     except Exception as e:
         return f"Failed to take screenshot: {e}"

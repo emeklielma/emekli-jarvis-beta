@@ -1,17 +1,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
 
 :root {
+  --theme-color: #00e5ff;
+  --theme-color-rgb: 0, 229, 255;
   --bg-color: #010308;
   --panel-bg: rgba(1, 4, 12, 0.65);
-  --cyan: #00e5ff;
-  --cyan-dim: rgba(0, 229, 255, 0.15);
+  --cyan: var(--theme-color);
+  --cyan-dim: rgba(var(--theme-color-rgb), 0.15);
   --yellow: #ffaa00; /* Stark Gold/Orange */
   --red: #ff2a2a; /* Hot Rod Red */
   --green: #00ff88;
-  --text-main: #00e5ff;
+  --text-main: var(--theme-color);
   --text-dim: #2b5b73;
-  --border: 1px solid rgba(0, 229, 255, 0.2);
-  --glass-glow: 0 0 20px rgba(0, 229, 255, 0.1);
+  --border: 1px solid rgba(var(--theme-color-rgb), 0.2);
+  --glass-glow: 0 0 20px rgba(var(--theme-color-rgb), 0.1);
 }
 
 * {
@@ -41,7 +43,7 @@ body {
   flex-direction: column;
   background: radial-gradient(circle at center, #030914 0%, var(--bg-color) 100%);
   position: relative;
-  box-shadow: inset 0 0 80px rgba(0, 229, 255, 0.15), 0 0 20px rgba(0, 229, 255, 0.2);
+  box-shadow: inset 0 0 80px rgba(var(--theme-color-rgb), 0.15), 0 0 20px rgba(var(--theme-color-rgb), 0.2);
   overflow: hidden;
 }
 
@@ -50,8 +52,8 @@ body {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   background-image: 
-    linear-gradient(rgba(0, 229, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 229, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(var(--theme-color-rgb), 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--theme-color-rgb), 0.03) 1px, transparent 1px);
   background-size: 40px 40px;
   pointer-events: none;
   z-index: 0;
@@ -61,7 +63,7 @@ body {
   content: "";
   position: absolute;
   top: 0; left: 0; right: 0; height: 100%;
-  background: linear-gradient(to bottom, transparent 0%, rgba(0, 229, 255, 0.1) 50%, transparent 100%);
+  background: linear-gradient(to bottom, transparent 0%, rgba(var(--theme-color-rgb), 0.1) 50%, transparent 100%);
   animation: scanline 8s linear infinite;
   pointer-events: none;
   z-index: 1;
@@ -104,12 +106,12 @@ body {
 .panel {
   background: rgba(3, 6, 18, 0.45);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 229, 255, 0.2);
+  border: 1px solid rgba(var(--theme-color-rgb), 0.2);
   border-radius: 4px;
 }
 
 .hud-box {
-  background: radial-gradient(circle at center, rgba(0, 229, 255, 0.03) 0%, transparent 80%);
+  background: radial-gradient(circle at center, rgba(var(--theme-color-rgb), 0.03) 0%, transparent 80%);
   padding: 40px 20px 20px 20px; /* Added massive top padding to prevent overlap */
   display: flex;
   flex-direction: column;
@@ -243,7 +245,7 @@ body {
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  box-shadow: 0 0 60px rgba(0, 229, 255, 0.3), inset 0 0 60px rgba(0, 229, 255, 0.3);
+  box-shadow: 0 0 60px rgba(var(--theme-color-rgb), 0.3), inset 0 0 60px rgba(var(--theme-color-rgb), 0.3);
 }
 
 .arc-core {
@@ -269,17 +271,17 @@ body {
 
 .ring-outer {
   width: 260px; height: 260px;
-  border: 3px solid rgba(0, 229, 255, 0.2);
+  border: 3px solid rgba(var(--theme-color-rgb), 0.2);
   border-top: 3px solid var(--cyan);
   border-bottom: 3px solid var(--cyan);
   animation: spinRight 15s linear infinite;
-  box-shadow: 0 0 15px rgba(0, 229, 255, 0.5);
+  box-shadow: 0 0 15px rgba(var(--theme-color-rgb), 0.5);
 }
 
 .ring-mid {
   width: 210px; height: 210px;
-  border-left: 3px dashed rgba(0, 229, 255, 0.8);
-  border-right: 3px dashed rgba(0, 229, 255, 0.8);
+  border-left: 3px dashed rgba(var(--theme-color-rgb), 0.8);
+  border-right: 3px dashed rgba(var(--theme-color-rgb), 0.8);
   animation: spinLeft 8s linear infinite;
 }
 
@@ -291,7 +293,7 @@ body {
 
 .ring-ultra-inner {
   width: 130px; height: 130px;
-  border: 1px solid rgba(0, 229, 255, 0.5);
+  border: 1px solid rgba(var(--theme-color-rgb), 0.5);
   border-radius: 50%;
   animation: spinLeft 3s linear infinite;
 }
@@ -344,8 +346,8 @@ body {
   color: var(--cyan);
   text-transform: uppercase;
   text-shadow: 0 0 10px var(--cyan);
-  background: rgba(0, 229, 255, 0.1);
-  border: 1px solid rgba(0, 229, 255, 0.3);
+  background: rgba(var(--theme-color-rgb), 0.1);
+  border: 1px solid rgba(var(--theme-color-rgb), 0.3);
   padding: 5px 0;
   border-radius: 4px;
   overflow: hidden;
@@ -355,7 +357,7 @@ body {
   content: "";
   position: absolute;
   top: 0; left: -100%; width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(var(--theme-color-rgb), 0.5), transparent);
   animation: radar-sweep 2s linear infinite;
 }
 

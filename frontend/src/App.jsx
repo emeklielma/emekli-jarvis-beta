@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import './index.css'
 
+const themes = [
+  { name: 'Cyan', color: '#00e5ff', rgb: '0, 229, 255' },
+  { name: 'Red', color: '#ff2a2a', rgb: '255, 42, 42' },
+  { name: 'Gold', color: '#ffaa00', rgb: '255, 170, 0' },
+  { name: 'Green', color: '#00ff88', rgb: '0, 255, 136' },
+  { name: 'Purple', color: '#b829ff', rgb: '184, 41, 255' },
+];
+
 function App() {
+  const [currentTheme, setCurrentTheme] = useState(themes[0])
   const [messages, setMessages] = useState([{ sender: 'sys', text: 'SYS: JARVIS UI online.' }])
   const [status, setStatus] = useState('ONLINE') // ONLINE, LISTENING, THINKING
   const [inputText, setInputText] = useState('')
@@ -11,9 +20,23 @@ function App() {
   const [isMicActive, setIsMicActive] = useState(true)
   const [wsInstance, setWsInstance] = useState(null)
   const messagesEndRef = useRef(null)
+  const chatContainerRef = useRef(null)
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--theme-color', currentTheme.color)
+    document.documentElement.style.setProperty('--theme-color-rgb', currentTheme.rgb)
+  }, [currentTheme])
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (chatContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop <= clientHeight + 100;
+      if (isNearBottom) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }
 
   useEffect(() => {
@@ -147,6 +170,7 @@ function App() {
     if (e.key === 'Enter') {
       sendMessage(inputText)
       setInputText('')
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50)
     }
   }
 
@@ -155,6 +179,21 @@ function App() {
       <div className="top-bar">
         <div>JARVIS - MARK XLIX</div>
         <div className="top-right">
+          <div className="theme-swatches" style={{ display: 'flex', gap: '8px', marginRight: '15px', alignItems: 'center' }}>
+            {themes.map(t => (
+              <div 
+                key={t.name}
+                onClick={() => setCurrentTheme(t)}
+                style={{
+                  width: '14px', height: '14px', borderRadius: '50%', 
+                  backgroundColor: t.color, cursor: 'pointer',
+                  border: currentTheme.name === t.name ? '2px solid white' : '1px solid transparent',
+                  boxShadow: `0 0 8px ${t.color}`
+                }}
+                title={t.name}
+              />
+            ))}
+          </div>
           <span>_</span>
           <span>□</span>
           <span>X</span>
@@ -238,7 +277,7 @@ function App() {
         <div className="panel right-panel">
           <div className="panel-title">▼ ACTIVITY LOG</div>
           
-          <div className="activity-log">
+          <div className="activity-log" ref={chatContainerRef}>
             {messages.map((msg, i) => (
               <div key={i} className={`log-entry ${msg.sender}`}>
                 {msg.text}
