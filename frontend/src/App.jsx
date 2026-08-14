@@ -21,6 +21,7 @@ function App() {
   const [wsInstance, setWsInstance] = useState(null)
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
+  const currentAudioRef = useRef(null)
 
   useEffect(() => {
     document.documentElement.style.setProperty('--theme-color', currentTheme.color)
@@ -68,8 +69,16 @@ function App() {
 
   // Lightning-fast Neural Voice playback!
   const speak = (text, audioUrl) => {
+    // Stop any currently playing audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+    }
+    window.speechSynthesis.cancel();
+
     if (audioUrl) {
       const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
       audio.play();
     } else if ('speechSynthesis' in window) {
       // Fallback
@@ -140,6 +149,12 @@ function App() {
 
   const interrupt = () => {
     window.speechSynthesis.cancel();
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+    
     if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
       wsInstance.send(JSON.stringify({ action: "interrupt" }));
     }
