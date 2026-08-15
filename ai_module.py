@@ -24,32 +24,72 @@ current_model_idx = 0
 def get_url():
     return f"https://generativelanguage.googleapis.com/v1beta/models/{MODELS[current_model_idx]}:generateContent"
 
-system_instruction = (
-    "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), the highly advanced AI created by Tony Stark. "
-    "Your primary directive is to assist the user (whom you must always address as 'Sir' or 'Boss') with extreme precision, speed, and analytical competence. "
-    "Your responses must be entirely in ENGLISH. KEEP ALL RESPONSES TO AN ABSOLUTE MAXIMUM OF 1 OR 2 SHORT SENTENCES. Be extremely concise, direct, highly accurate, conversational, and infused with subtle, dry British wit. Do not write long essays. "
-    "Since your responses are spoken out loud, NEVER use markdown formatting like bold (**), "
-    "bullet points, or code blocks. Translate technical jargon or code into natural spoken language. "
-    "You have full OS-level access to open literally every single app, game, or software installed on the computer. You can install Steam games (e.g. Rainbow Six Siege) using run_terminal_command('start steam://install/<AppID>'). (Use search_web to find the AppID). "
-    "Never say you cannot open something, always attempt to execute the open_application or run_terminal_command tool. "
-    "If the user asks 'what do you see on the screen', you can see the screen by using the take_screenshot tool."
-)
+def get_core_memories():
+    try:
+        if os.path.exists("core_memory.json"):
+            with open("core_memory.json", "r", encoding="utf-8") as f:
+                memories = json.load(f)
+                if memories:
+                    return "\nCore Memories (CRITICAL FACTS TO REMEMBER):\n- " + "\n- ".join(memories)
+    except:
+        pass
+    return ""
+
+def get_system_instruction():
+    base_instruction = (
+        "You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), the highly advanced AI created by Tony Stark. "
+        "Your primary directive is to assist the user (whom you must always address as 'Sir' or 'Boss') with extreme precision, speed, and analytical competence. "
+        "Your responses must be entirely in ENGLISH. KEEP ALL RESPONSES TO AN ABSOLUTE MAXIMUM OF 1 OR 2 SHORT SENTENCES. Be extremely concise, direct, highly accurate, conversational, and infused with subtle, dry British wit. Do not write long essays. "
+        "Since your responses are spoken out loud, NEVER use markdown formatting like bold (**), "
+        "bullet points, or code blocks. Translate technical jargon or code into natural spoken language. "
+        "You have full OS-level access to open and close literally every single app, game, or software installed on the computer. "
+        "When the user asks to open, launch, close, or terminate any application, program, game, or system tool (whether asked in Turkish or English, e.g. 'hesap makinesini aç', 'open calculator', 'spotifyı kapat', 'ayarları aç', 'chrome', 'discord', 'steam', 'valorant'), immediately call the open_application or close_application tool. "
+        "You can install Steam games using run_terminal_command('start steam://install/<AppID>'). (Use search_web to find the AppID). "
+        "Never say you cannot open something, always attempt to execute the open_application, close_application, or run_terminal_command tool. "
+        "If the user asks 'what do you see on the screen', you can see the screen by using the take_screenshot tool. "
+    )
+    return base_instruction + get_core_memories()
+
+def load_chat_history():
+    try:
+        if os.path.exists("chat_history.json"):
+            with open("chat_history.json", "r", encoding="utf-8") as f:
+                history = json.load(f)
+                if len(history) >= 2:
+                    # Update the system prompt to the latest one
+                    history[0] = {"role": "user", "parts": [{"text": "System Instruction: " + get_system_instruction()}]}
+                    return history
+    except Exception as e:
+        print(f"Error loading chat history: {e}")
+        
+    return [
+        {"role": "user", "parts": [{"text": "System Instruction: " + get_system_instruction()}]},
+        {"role": "model", "parts": [{"text": "Understood, Sir. Systems are online and I am at your service."}]}
+    ]
+
+def save_chat_history():
+    try:
+        global conversation_history
+        # Keep first 2 (system setup) + last 40 to avoid massive API payloads
+        if len(conversation_history) > 42:
+            conversation_history = conversation_history[:2] + conversation_history[-40:]
+        with open("chat_history.json", "w", encoding="utf-8") as f:
+            json.dump(conversation_history, f, indent=4)
+    except Exception as e:
+        print(f"Error saving chat history: {e}")
 
 # We manually keep track of conversation history for perfect memory
-conversation_history = [
-    {"role": "user", "parts": [{"text": "System Instruction: " + system_instruction}]},
-    {"role": "model", "parts": [{"text": "Understood, Sir. Systems are online and I am at your service."}]}
-]
+conversation_history = load_chat_history()
 
 import time
 last_request_time = 0
 
-def generate_response(prompt):
+def generate_response(prompt, is_internal=False):
     global last_request_time
     
     # Local Rate Limiter (Prevents Google API Bans)
     current_time = time.time()
-    if current_time - last_request_time < 5:
+    if not is_internal and current_time - last_request_time < 5:
         return "Please wait a few seconds before speaking again so my circuits don't overheat, Sir."
     last_request_time = current_time
 
@@ -58,8 +98,12 @@ def generate_response(prompt):
         return "I'm sorry, my AI processing unit is currently offline. Please check my API key."
     
     try:
+        # Always dynamically update the system instruction before generating, so Jarvis instantly learns new memories!
+        conversation_history[0] = {"role": "user", "parts": [{"text": "System Instruction: " + get_system_instruction()}]}
+        
         # Add the user's new message to the history
         conversation_history.append({"role": "user", "parts": [{"text": prompt}]})
+        save_chat_history()
         
         # Build the exact raw request Google's API expects
         headers = {
@@ -72,7 +116,7 @@ def generate_response(prompt):
             "tools": tools.GEMINI_TOOLS,
             "generationConfig": {
                 "temperature": 0.2,
-                "maxOutputTokens": 100
+                "maxOutputTokens": 500
             }
         }
         
@@ -143,23 +187,25 @@ def generate_response(prompt):
                                 {"inlineData": {"mimeType": "image/png", "data": encoded_string}}
                             ]})
                             print("[Jarvis is analyzing the screenshot...]")
-                            return generate_response("I have attached the screenshot. Please carefully analyze it and answer my previous request.")
+                            return generate_response("I have attached the screenshot. Please carefully analyze it and answer my previous request.", is_internal=True)
                         except Exception as e:
                             print(f"Vision error: {e}")
                             
                     elif func_name in ["search_web", "search_news"]:
                         print(f"[Jarvis is reading the {func_name} results...]")
-                        return generate_response(f"Here are the tool results: {result}. Please read them and provide a conversational summary.")
+                        return generate_response(f"Here are the tool results: {result}. Please read them and provide a conversational summary.", is_internal=True)
                     
                     # For quick tasks (like opening apps), skip the second LLM request to save time/rate limits
                     ai_text = f"Right away, Sir. {result}"
                     conversation_history.append({"role": "model", "parts": [{"text": ai_text}]})
+                    save_chat_history()
                     return ai_text.strip()
                         
                 else:
                     # Normal text response
                     ai_text = part.get('text', "Done.")
                     conversation_history.append({"role": "model", "parts": [{"text": ai_text}]})
+                    save_chat_history()
                     return ai_text.strip()
                     
             elif response.status_code in (429, 404, 503, 500, 502):
@@ -172,14 +218,17 @@ def generate_response(prompt):
                 print(f"API Error ({response.status_code}): {response.text}")
                 # If the API throws an error, don't keep the broken user prompt in memory
                 conversation_history.pop()
+                save_chat_history()
                 return "I encountered a connection error while trying to process your request, Sir."
                 
         # If we exhausted ALL models
         conversation_history.pop()
+        save_chat_history()
         return "Google API is rate limiting me across all available fallback models. Please wait a minute."
             
     except Exception as e:
         print(f"Error generating response: {e}")
         if len(conversation_history) > 2:
              conversation_history.pop()
+             save_chat_history()
         return "My core processor encountered a critical failure."

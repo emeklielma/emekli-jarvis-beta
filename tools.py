@@ -4,7 +4,7 @@ import urllib.parse
 import webbrowser
 import time
 import pyautogui
-from AppOpener import open as open_app
+import app_launcher
 
 # CRITICAL FIX: Disable failsafe so mouse resting in corner doesn't crash the tools!
 pyautogui.FAILSAFE = False
@@ -68,33 +68,18 @@ def search_youtube(query):
         return f"Failed to search YouTube: {e}"
 
 def open_application(app_name):
-    """Opens an application using AppOpener, falling back to visual typing if not found."""
+    """Opens any Windows application, game, or software using the advanced app_launcher engine."""
     try:
-        from AppOpener import open as open_app
-        import pyautogui
-        import time
-        
-        try:
-            # 1. Try robust backend method
-            open_app(app_name, match_closest=True)
-            time.sleep(1.0)
-            _minimize_jarvis()
-            return f"Successfully opened {app_name}."
-        except Exception as backend_err:
-            print(f"AppOpener failed ({backend_err}), falling back to visual typing...")
-            # 2. Fallback to visual start menu typing
-            pyautogui.hotkey('ctrl', 'esc') # Open Start Menu
-            time.sleep(1.0) 
-            pyautogui.write(app_name, interval=0.08)
-            time.sleep(0.8) 
-            pyautogui.press('enter')
-            
-            time.sleep(1.5) 
-            _minimize_jarvis()
-            
-            return f"Successfully executed visual start menu search for {app_name}."
+        return app_launcher.open_app(app_name)
     except Exception as e:
         return f"Failed to open {app_name}: {e}"
+
+def close_application(app_name):
+    """Closes or terminates a running Windows application or game."""
+    try:
+        return app_launcher.close_app(app_name)
+    except Exception as e:
+        return f"Failed to close {app_name}: {e}"
 
 def get_time_and_date():
     """Returns the current date and time."""
@@ -269,6 +254,43 @@ def trigger_protocol(protocol_name):
     except Exception as e:
         return f"Failed to activate protocol: {e}"
 
+import json
+
+def remember_fact(fact):
+    """Saves a permanent core memory/fact about the user."""
+    try:
+        memory_file = "core_memory.json"
+        memories = []
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r', encoding='utf-8') as f:
+                memories = json.load(f)
+        
+        if fact not in memories:
+            memories.append(fact)
+            with open(memory_file, 'w', encoding='utf-8') as f:
+                json.dump(memories, f, indent=4, ensure_ascii=False)
+            return f"Successfully committed to core memory: {fact}"
+        return f"I already know this fact: {fact}"
+    except Exception as e:
+        return f"Error saving memory: {e}"
+
+def delete_fact(fact):
+    """Deletes a fact from core memory."""
+    try:
+        memory_file = "core_memory.json"
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r', encoding='utf-8') as f:
+                memories = json.load(f)
+            
+            if fact in memories:
+                memories.remove(fact)
+                with open(memory_file, 'w', encoding='utf-8') as f:
+                    json.dump(memories, f, indent=4, ensure_ascii=False)
+                return f"Successfully deleted from core memory: {fact}"
+        return f"Fact not found in core memory."
+    except Exception as e:
+        return f"Error deleting memory: {e}"
+
 # ---------------------------------------------------------
 # TOOL DISPATCHER MAP
 # ---------------------------------------------------------
@@ -276,6 +298,7 @@ TOOL_MAP = {
     "open_website": open_website,
     "search_youtube": search_youtube,
     "open_application": open_application,
+    "close_application": close_application,
     "get_time_and_date": get_time_and_date,
     "run_terminal_command": run_terminal_command,
     "search_news": search_news,
@@ -287,7 +310,9 @@ TOOL_MAP = {
     "control_media": control_media,
     "get_weather": get_weather,
     "send_notification": send_notification,
-    "trigger_protocol": trigger_protocol
+    "trigger_protocol": trigger_protocol,
+    "remember_fact": remember_fact,
+    "delete_fact": delete_fact
 }
 
 # The JSON schema passed to Gemini to teach it about our tools
@@ -378,13 +403,27 @@ GEMINI_TOOLS = [
             },
             {
                 "name": "open_application",
-                "description": "Opens ANY local Windows application, game, or software on the user's computer. Use this whenever the user asks you to open a program, game, or app. It has full OS access to open absolutely anything.",
+                "description": "Opens ANY local Windows application, game, system tool, or software on the user's computer. Fully supports Turkish and English names (e.g. 'hesap makinesi', 'calculator', 'not defteri', 'notepad', 'ayarlar', 'settings', 'görev yöneticisi', 'task manager', 'spotify', 'chrome', 'discord', 'steam', 'valorant', 'tlauncher', 'roblox', 'terminal', 'paint'). It has full OS access to open absolutely anything.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
                         "app_name": {
                             "type": "STRING",
-                            "description": "The simple name of the app to open (e.g. 'notepad', 'calculator')."
+                            "description": "The name or query for the app to open (in Turkish or English, e.g. 'hesap makinesi', 'chrome', 'spotify', 'settings')."
+                        }
+                    },
+                    "required": ["app_name"]
+                }
+            },
+            {
+                "name": "close_application",
+                "description": "Closes or terminates a running Windows application or game (e.g. 'spotify', 'chrome', 'hesap makinesi', 'notepad').",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "app_name": {
+                            "type": "STRING",
+                            "description": "The name of the app to close."
                         }
                     },
                     "required": ["app_name"]
@@ -472,6 +511,34 @@ GEMINI_TOOLS = [
                         }
                     },
                     "required": ["query"]
+                }
+            },
+            {
+                "name": "remember_fact",
+                "description": "Saves a permanent fact about the user or the environment to your core memory database. Use this WHENEVER the user tells you a preference, their name, or something you should remember for the future.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "fact": {
+                            "type": "STRING",
+                            "description": "The concise fact to remember (e.g. 'The user likes the color red', 'The user's name is John')"
+                        }
+                    },
+                    "required": ["fact"]
+                }
+            },
+            {
+                "name": "delete_fact",
+                "description": "Deletes a fact from your core memory database if it is no longer true.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "fact": {
+                            "type": "STRING",
+                            "description": "The exact fact string to delete."
+                        }
+                    },
+                    "required": ["fact"]
                 }
             }
         ]
