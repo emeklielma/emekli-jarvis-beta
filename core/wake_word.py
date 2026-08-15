@@ -52,9 +52,14 @@ def start_wake_word_thread(main_loop, broadcast_func):
                         # Clear prediction buffer to avoid rapid re-triggering
                         oww_model.reset()
 
-        with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype=FORMAT, blocksize=CHUNK, callback=callback):
-            while True:
-                time.sleep(0.1)
+        while True:
+            try:
+                with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype=FORMAT, blocksize=CHUNK, callback=callback):
+                    while True:
+                        time.sleep(0.1)
+            except Exception as e:
+                print(f"[WAKE WORD WARNING] Audio stream error: {e}. Retrying in 5s...")
+                time.sleep(5)
 
     except Exception as e:
-        print(f"[WAKE WORD ERROR] {e}")
+        print(f"[WAKE WORD FATAL ERROR] {e}")
