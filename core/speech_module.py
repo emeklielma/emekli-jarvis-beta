@@ -21,8 +21,8 @@ async def speak_sentence_worker():
             if not text.strip():
                 _speech_queue.task_done()
                 continue
-                
-            voice = 'tr-TR-AhmetNeural'
+            # English voice
+            voice = 'en-US-ChristopherNeural'
             temp_audio = f"jarvis_response_{int(time.time()*1000)}.mp3"
             
             try:
@@ -161,7 +161,7 @@ def listen(on_speech_start=None):
     try:
         with sr.AudioFile(audio_file) as source:
             audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language="tr-TR")
+            text = recognizer.recognize_google(audio_data, language="en-US")
             return text.lower()
     except sr.UnknownValueError:
         pass
