@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
 
 const themes = [
@@ -12,27 +12,30 @@ const themes = [
 function App() {
   const [currentTheme, setCurrentTheme] = useState(themes[0])
   const [messages, setMessages] = useState([{ sender: 'sys', text: 'SYS: JARVIS UI online.' }])
-  const [status, setStatus] = useState('ONLINE') // ONLINE, LISTENING, THINKING
+  const [activeStreamText, setActiveStreamText] = useState('')
+  const [activeTool, setActiveTool] = useState(null)
+  
+  const [status, setStatus] = useState('ONLINE') // ONLINE, LISTENING, HEARING, THINKING
   const [inputText, setInputText] = useState('')
   const [cpuUsage, setCpuUsage] = useState(24)
   const [ramUsage, setRamUsage] = useState(48)
   const [netSpeed, setNetSpeed] = useState(13)
   const [isMicActive, setIsMicActive] = useState(true)
   const [wsInstance, setWsInstance] = useState(null)
+  
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
-  const currentAudioRef = useRef(null)
+  const isScrolledUpRef = useRef(false)
+  const streamCompleteRef = useRef(false)
 
   const [isBooting, setIsBooting] = useState(true)
   const [bootText, setBootText] = useState('')
-  const [protocol, setProtocol] = useState('normal') // normal, lockdown, party, decryption, destruct, satellite
-  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [protocol, setProtocol] = useState('normal')
   const [countdown, setCountdown] = useState(null)
 
   useEffect(() => {
     if (countdown === null) return;
     if (countdown <= 0) {
-      // Trigger minimize at 0
       setCountdown(null);
       setProtocol('normal');
       setCurrentTheme(themes[0]);
@@ -72,23 +75,25 @@ function App() {
     document.documentElement.style.setProperty('--theme-color-rgb', currentTheme.rgb)
   }, [currentTheme])
 
-  const scrollToBottom = () => {
+  const handleScroll = () => {
     if (chatContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-      const isNearBottom = scrollHeight - scrollTop <= clientHeight + 100;
-      if (isNearBottom) {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      isScrolledUpRef.current = scrollHeight - scrollTop > clientHeight + 50;
     }
-  }
+  };
+
+  const scrollToBottom = useCallback(() => {
+    if (!isScrolledUpRef.current) {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
+  }, []);
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, activeStreamText, activeTool, scrollToBottom])
 
-  // F11 Fullscreen support for pywebview
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
       if (e.key === 'F11') {
@@ -101,33 +106,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  // Removed fake system monitor jitter - now using real data from python backend!
-
-  // Lightning-fast Neural Voice playback!
-  const speak = (text, audioUrl) => {
-    // Stop any currently playing audio
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-    }
-    window.speechSynthesis.cancel();
-
-    if (audioUrl) {
-      const audio = new Audio(audioUrl);
-      currentAudioRef.current = audio;
-      setIsSpeaking(true);
-      audio.onended = () => setIsSpeaking(false);
-      audio.play();
-    } else if ('speechSynthesis' in window) {
-      // Fallback
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = () => setIsSpeaking(false);
-      setIsSpeaking(true);
-      window.speechSynthesis.speak(utterance);
-    }
-  }
-
-  // Connect to Python Brain via WebSocket
   useEffect(() => {
     let ws;
     let reconnectInterval;
@@ -153,33 +131,31 @@ function App() {
           } catch (err) {}
         } else if (data.type === 'action' && data.value === 'protocol') {
           setProtocol(data.protocol_name);
-          if (data.protocol_name === 'lockdown') {
-             setCurrentTheme(themes.find(t => t.name === 'Red') || themes[1]);
-          } else if (data.protocol_name === 'normal') {
-             setCurrentTheme(themes[0]);
-             setCountdown(null);
-          } else if (data.protocol_name === 'party') {
-             setCurrentTheme(themes.find(t => t.name === 'Purple') || themes[4]);
-          } else if (data.protocol_name === 'decryption') {
-             setCurrentTheme(themes.find(t => t.name === 'Green') || themes[3]);
-          } else if (data.protocol_name === 'destruct') {
-             setCurrentTheme(themes.find(t => t.name === 'Red') || themes[1]);
-             setCountdown(10);
-          } else if (data.protocol_name === 'satellite') {
-             setCurrentTheme(themes.find(t => t.name === 'Cyan') || themes[0]);
-          }
+          if (data.protocol_name === 'lockdown') setCurrentTheme(themes[1]);
+          else if (data.protocol_name === 'normal') { setCurrentTheme(themes[0]); setCountdown(null); }
+          else if (data.protocol_name === 'party') setCurrentTheme(themes[4]);
+          else if (data.protocol_name === 'decryption') setCurrentTheme(themes[3]);
+          else if (data.protocol_name === 'destruct') { setCurrentTheme(themes[1]); setCountdown(10); }
+          else if (data.protocol_name === 'satellite') setCurrentTheme(themes[0]);
         } else if (data.type === 'vitals') {
           setCpuUsage(data.cpu);
           setRamUsage(data.ram);
           setNetSpeed(data.net);
         } else if (data.type === 'status') {
           setStatus(data.value);
+          if (data.value === 'ONLINE') {
+              streamCompleteRef.current = true;
+          }
         } else if (data.type === 'log') {
           setMessages(prev => [...prev, { sender: data.sender, text: data.text }]);
-          if (data.speak && data.text.startsWith('JRV: ')) {
-            // Strip the "JRV: " prefix before speaking
-            speak(data.text.replace('JRV: ', ''), data.audioUrl);
-          }
+        } else if (data.type === 'token') {
+          setActiveStreamText(prev => prev + data.content);
+        } else if (data.type === 'tool_start') {
+          setActiveTool(`Running: ${data.name}...`);
+        } else if (data.type === 'tool_end') {
+          setActiveTool(null);
+        } else if (data.type === 'error') {
+          setMessages(prev => [...prev, { sender: 'err', text: `ERR: ${data.message}` }]);
         }
       };
 
@@ -188,7 +164,6 @@ function App() {
         reconnectInterval = setTimeout(connect, 3000);
       };
       
-      // Store ws in state so buttons can use it!
       setWsInstance(ws);
     };
 
@@ -200,6 +175,19 @@ function App() {
     }
   }, []);
 
+  // Flush active stream to messages when status goes ONLINE
+  useEffect(() => {
+      if (streamCompleteRef.current && status === 'ONLINE') {
+          if (activeStreamText.trim() !== '') {
+              setMessages(prev => [...prev, { sender: 'sys', text: `JRV: ${activeStreamText}` }]);
+              setActiveStreamText('');
+          }
+          setActiveTool(null);
+          streamCompleteRef.current = false;
+      }
+  }, [status, activeStreamText]);
+
+
   const toggleMic = () => {
     const newState = !isMicActive;
     setIsMicActive(newState);
@@ -209,14 +197,6 @@ function App() {
   }
 
   const interrupt = () => {
-    setIsSpeaking(false);
-    window.speechSynthesis.cancel();
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-      currentAudioRef.current = null;
-    }
-    
     if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
       wsInstance.send(JSON.stringify({ action: "interrupt" }));
     }
@@ -224,30 +204,16 @@ function App() {
 
   const sendMessage = async (text) => {
     if (!text.trim()) return
-    setStatus('THINKING')
-    setMessages(prev => [...prev, { sender: 'user', text: `USR: ${text}` }])
-    
-    try {
-      const response = await fetch('http://localhost:8000/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text })
-      })
-      const data = await response.json()
-      const reply = data.response || data.error
-      setMessages(prev => [...prev, { sender: 'sys', text: `JRV: ${reply}` }])
-      speak(reply, data.audioUrl)
-    } catch (err) {
-      setMessages(prev => [...prev, { sender: 'err', text: "ERR: Connection to Brain failed." }])
+    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+        wsInstance.send(JSON.stringify({ action: "chat", text: text }));
     }
-    setStatus('ONLINE')
   }
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
       sendMessage(inputText)
       setInputText('')
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50)
+      isScrolledUpRef.current = false; // force scroll down on user input
     }
   }
 
@@ -266,7 +232,6 @@ function App() {
   return (
     <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''} ${protocol === 'decryption' ? 'matrix-mode' : ''}`}>
       
-      {/* HUD CROSSHAIRS */}
       <div className="hud-crosshair top-left"></div>
       <div className="hud-crosshair top-right"></div>
       <div className="hud-crosshair bottom-left"></div>
@@ -306,7 +271,6 @@ function App() {
 
       <div className="main-content">
         
-        {/* LEFT PANEL */}
         <div className="panel left-panel">
           <div className="panel-title">▼ SYS MONITOR</div>
           
@@ -322,45 +286,24 @@ function App() {
 
           <div className="stat-box">
             <div className="stat-label"><span>NET</span> <span className="stat-value">{netSpeed.toFixed(0)}KB/s</span></div>
-            <div className="progress-bar"><div className="progress cyan" style={{width: `${netSpeed * 2}%`}}></div></div>
-          </div>
-
-          <div className="stat-box">
-            <div className="stat-label"><span>GPU</span> <span className="stat-value" style={{color: '#ff3366'}}>9%</span></div>
-            <div className="progress-bar"><div className="progress red" style={{width: '9%'}}></div></div>
+            <div className="progress-bar"><div className="progress cyan" style={{width: `${Math.min(netSpeed * 2, 100)}%`}}></div></div>
           </div>
           
-          <div className="stat-box">
-            <div className="stat-label"><span>TMP</span> <span className="stat-value">N/A</span></div>
-          </div>
-
-          <div className="sys-info">
+          <div className="sys-info" style={{marginTop: '20px'}}>
             UP 00:21<br/>
             PROC 280<br/>
             OS WIN
           </div>
 
-          <div className="status-badges">
+          <div className="status-badges" style={{marginTop: '20px'}}>
             <div className="badge active">AI CORE<br/>ACTIVE</div>
             <div className="badge active">SEC<br/>CLEARED</div>
             <div className={`badge ${protocol !== 'normal' ? 'active' : 'outline'}`} style={{color: protocol === 'lockdown' ? 'red' : ''}}>
               PROTOCOL<br/>{protocol.toUpperCase()}
             </div>
           </div>
-          
-          {/* Audio Visualizer */}
-          {isSpeaking && (
-            <div className="audio-visualizer" style={{marginTop: '20px', display: 'flex', gap: '5px', justifyContent: 'center'}}>
-              <div className="bar bar1"></div>
-              <div className="bar bar2"></div>
-              <div className="bar bar3"></div>
-              <div className="bar bar4"></div>
-              <div className="bar bar5"></div>
-            </div>
-          )}
         </div>
 
-        {/* CENTER PANEL */}
         <div className="panel center-panel hud-box">
           <div className="hud-corner top-left"></div>
           <div className="hud-corner top-right"></div>
@@ -399,24 +342,28 @@ function App() {
           )}
         </div>
 
-        {/* RIGHT PANEL */}
         <div className="panel right-panel">
           <div className="panel-title">▼ ACTIVITY LOG</div>
           
-          <div className="activity-log" ref={chatContainerRef}>
+          <div className="activity-log" ref={chatContainerRef} onScroll={handleScroll}>
             {messages.map((msg, i) => (
               <div key={i} className={`log-entry ${msg.sender}`}>
                 {msg.text}
               </div>
             ))}
+            
+            {/* Active Stream Rendering */}
+            {activeStreamText && (
+               <div className="log-entry sys stream-active">
+                  JRV: {activeStreamText} <span className="blink">|</span>
+               </div>
+            )}
+            {activeTool && (
+               <div className="log-entry sys tool-active" style={{color: 'var(--theme-color)', fontStyle: 'italic'}}>
+                  [ {activeTool} ]
+               </div>
+            )}
             <div ref={messagesEndRef} />
-          </div>
-
-          <div className="panel-title" style={{marginTop: '20px'}}>▼ FILE UPLOAD</div>
-          <div className="file-upload">
-            <div className="upload-icon">↑</div>
-            Drop file here or Click to Browse<br/>
-            <span>Images · Video · Audio · PDF · Docs · Code · Data</span>
           </div>
 
           <div className="panel-title" style={{marginTop: '20px'}}>▼ COMMAND INPUT</div>
@@ -428,7 +375,7 @@ function App() {
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button className="btn-send" onClick={() => {sendMessage(inputText); setInputText('')}}>▶</button>
+            <button className="btn-send" onClick={() => {sendMessage(inputText); setInputText(''); isScrolledUpRef.current = false;}}>▶</button>
           </div>
           
           <div className="action-buttons">

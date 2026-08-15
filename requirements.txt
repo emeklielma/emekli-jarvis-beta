@@ -3,3 +3,13 @@ pyttsx3
 pyaudio
 google-generativeai
 python-dotenv
+
+rapidfuzz
+
+aiohttp
+
+mss
+Pillow
+openwakeword
+pyaudio
+google-generativeai

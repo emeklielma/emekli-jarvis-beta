@@ -12,3 +12,8 @@ frontend/.eslintcache
 frontend/public/*.mp3
 chat_history.json
 screen.png
+
+# Memory and Data
+data/
+core_memory.json
+*.db
