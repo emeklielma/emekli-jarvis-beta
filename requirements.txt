@@ -13,3 +13,7 @@ Pillow
 openwakeword
 pyaudio
 google-generativeai
+
+pystray
+psutil
+pynvml

@@ -19,7 +19,9 @@ import tools.system_tools
 import tools.browser_tools
 import tools.vision_tools
 import tools.memory_tools
+import tools.system_diagnostics
 from core import wake_word
+from core.tray import tray_manager
 
 app = FastAPI()
 
@@ -153,6 +155,9 @@ def vitals_loop():
 async def startup_event():
     global main_loop
     main_loop = asyncio.get_running_loop()
+    
+    # Start the system tray
+    tray_manager.start()
     
     # Start the async TTS worker
     asyncio.create_task(sm.speak_sentence_worker())
