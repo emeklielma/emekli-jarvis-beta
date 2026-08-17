@@ -147,6 +147,155 @@ def close_application(app_name):
     except Exception as e:
         return f"Error closing application: {e}"
 
+# search_files, move_file ve copy_file'ın izin verdiği tek klasör kümesi.
+# Path traversal veya mutlak yol ile bu klasörlerin dışına çıkmak her zaman
+# reddedilir (fail-closed) — bkz. _resolve_within_allowed_folders.
+_ALLOWED_FOLDERS = {
+    "masaüstü": os.path.join(os.path.expanduser("~"), "Desktop"),
+    "belgeler": os.path.join(os.path.expanduser("~"), "Documents"),
+    "i̇ndirilenler": os.path.join(os.path.expanduser("~"), "Downloads"),
+    "resimler": os.path.join(os.path.expanduser("~"), "Pictures"),
+}
+
+_SYSTEM_FOLDER_PREFIXES = [
+    os.path.normcase(os.path.expandvars(r"%SystemRoot%")),
+    os.path.normcase(os.path.expandvars(r"%ProgramFiles%")),
+    os.path.normcase(os.path.expandvars(r"%ProgramFiles(x86)%")),
+]
+
+
+def _resolve_within_allowed_folders(path):
+    """Bir yolu 4 standart klasörden biriyle sınırlar.
+
+    Girdi mutlak bir yol, göreli bir yol veya sadece bir dosya adı olabilir.
+    Sonuç, os.path.realpath ile normalize edildikten sonra izinli klasör
+    köklerinden biriyle başlamıyorsa (".." veya sembolik link ile dışarı
+    taşma dahil) None döner — çağıran bunu reddetmelidir.
+    """
+    real = os.path.realpath(os.path.abspath(path))
+    real_cn = os.path.normcase(real)
+    for root in _ALLOWED_FOLDERS.values():
+        root_cn = os.path.normcase(os.path.realpath(root))
+        if real_cn == root_cn or real_cn.startswith(root_cn + os.sep):
+            return real
+    return None
+
+
+def _is_system_path(path):
+    real_cn = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    return any(real_cn.startswith(prefix) for prefix in _SYSTEM_FOLDER_PREFIXES if prefix)
+
+
+def search_files(query, folder=None):
+    """Standart kullanıcı klasörlerinde (Masaüstü, Belgeler, İndirilenler,
+    Resimler) dosya adına göre arama yapar. folder verilirse arama sadece o
+    klasörle sınırlanır; verilmezse dördü de taranır. Bu dört klasörün
+    dışına asla çıkılmaz (path traversal denemeleri reddedilir).
+    """
+    if not query or not query.strip():
+        return "Reddedildi: Arama sorgusu boş."
+
+    if folder:
+        key = folder.strip().lower()
+        if key not in _ALLOWED_FOLDERS:
+            return (
+                f"Reddedildi: '{folder}' izinli klasörlerden biri değil. "
+                f"İzinli klasörler: {', '.join(_ALLOWED_FOLDERS.keys())}."
+            )
+        search_roots = {key: _ALLOWED_FOLDERS[key]}
+    else:
+        search_roots = _ALLOWED_FOLDERS
+
+    query_lower = query.strip().lower()
+    matches = []
+    for root in search_roots.values():
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Her sonucun gerçekten izinli kök altında kaldığını garanti eder
+            # (sembolik link ile dışarı çıkma ihtimaline karşı ekstra kontrol).
+            if _resolve_within_allowed_folders(dirpath) is None:
+                dirnames[:] = []
+                continue
+            for name in filenames:
+                if query_lower in name.lower():
+                    matches.append(os.path.join(dirpath, name))
+                    if len(matches) >= 50:
+                        break
+            if len(matches) >= 50:
+                break
+        if len(matches) >= 50:
+            break
+
+    if not matches:
+        return f"'{query}' için sonuç bulunamadı."
+    return f"{len(matches)} sonuç bulundu:\n" + "\n".join(matches)
+
+
+def move_file(source, destination):
+    return _relocate_file(source, destination, move=True)
+
+
+def copy_file(source, destination):
+    return _relocate_file(source, destination, move=False)
+
+
+def _relocate_file(source, destination, move):
+    """move_file/copy_file'ın ortak mantığı.
+
+    Onay kuralları:
+      a) hedef dosya zaten varsa (üzerine yazma riski) -> onay iste.
+      b) hedef sistem/program klasöründeyse -> onay iste (kaynak/hedef zaten
+         _ALLOWED_FOLDERS ile sınırlı olduğundan pratikte tetiklenmez, ama
+         ekstra güvenlik katmanı olarak duruyor).
+      c) diğer tüm durumlarda (standart klasörler arası basit taşıma/kopyalama)
+         onaysız direkt çalışır.
+    """
+    import shutil
+
+    src_real = _resolve_within_allowed_folders(source)
+    if src_real is None:
+        return f"Reddedildi: Kaynak '{source}' izinli klasörlerin (Masaüstü, Belgeler, İndirilenler, Resimler) dışında."
+    if not os.path.isfile(src_real):
+        return f"Reddedildi: Kaynak dosya bulunamadı: {source}"
+
+    dst_real = _resolve_within_allowed_folders(destination)
+    if dst_real is None:
+        return f"Reddedildi: Hedef '{destination}' izinli klasörlerin (Masaüstü, Belgeler, İndirilenler, Resimler) dışında."
+
+    # destination bir klasörse dosya adını kaynaktan miras al.
+    if os.path.isdir(dst_real):
+        dst_real = os.path.join(dst_real, os.path.basename(src_real))
+        dst_real = _resolve_within_allowed_folders(dst_real) or dst_real
+
+    action_word = "taşınsın" if move else "kopyalansın"
+
+    if os.path.exists(dst_real):
+        approved, reason = _await_approval(
+            f"'{os.path.basename(src_real)}' dosyası '{dst_real}' konumuna {action_word} mı? "
+            f"Hedefte aynı isimde bir dosya zaten var, üzerine yazılacak."
+        )
+        if not approved:
+            return f"İşlem yapılmadı: {reason}"
+    elif _is_system_path(dst_real):
+        approved, reason = _await_approval(
+            f"'{os.path.basename(src_real)}' dosyası sistem/program klasörüne ({dst_real}) {action_word} mı?"
+        )
+        if not approved:
+            return f"İşlem yapılmadı: {reason}"
+
+    try:
+        os.makedirs(os.path.dirname(dst_real), exist_ok=True)
+        if move:
+            shutil.move(src_real, dst_real)
+            return f"'{src_real}' başarıyla '{dst_real}' konumuna taşındı."
+        else:
+            shutil.copy2(src_real, dst_real)
+            return f"'{src_real}' başarıyla '{dst_real}' konumuna kopyalandı."
+    except Exception as e:
+        return f"Error: {e}"
+
+
 def _await_approval(command):
     """Onay isteğini UI'ya gönderir ve kullanıcı yanıtını (approve/deny/timeout/
     interrupt) senkron olarak bekler. Dönüş: (approved: bool, reason: str|None).
@@ -217,7 +366,10 @@ TOOL_MAP = {
     "get_time_and_date": get_time_and_date,
     "run_terminal_command": run_terminal_command,
     "press_keys": press_keys,
-    "type_text": type_text
+    "type_text": type_text,
+    "search_files": search_files,
+    "move_file": move_file,
+    "copy_file": copy_file
 }
 
 GEMINI_TOOLS = [{
@@ -229,6 +381,9 @@ GEMINI_TOOLS = [{
         {"name": "get_time_and_date", "description": "Gets current time.", "parameters": {"type": "OBJECT"}},
         {"name": "run_terminal_command", "description": "Runs a PowerShell command.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
         {"name": "press_keys", "description": "Simulates keyboard presses (e.g. ctrl+c).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "STRING"}}, "required": ["keys"]}},
-        {"name": "type_text", "description": "Simulates typing.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}}, "required": ["text"]}}
+        {"name": "type_text", "description": "Simulates typing.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}}, "required": ["text"]}},
+        {"name": "search_files", "description": "Searches for files by name within the user's standard folders (Desktop, Documents, Downloads, Pictures). Cannot search outside these folders.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "Substring to match against file names."}, "folder": {"type": "STRING", "description": "Optional: limit the search to one folder ('masaüstü', 'belgeler', 'i̇ndirilenler', 'resimler'). If omitted, searches all four."}}, "required": ["query"]}},
+        {"name": "move_file", "description": "Moves a file between the user's standard folders (Desktop, Documents, Downloads, Pictures). Asks for confirmation if the destination already has a file with the same name.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING"}, "destination": {"type": "STRING"}}, "required": ["source", "destination"]}},
+        {"name": "copy_file", "description": "Copies a file between the user's standard folders (Desktop, Documents, Downloads, Pictures). Asks for confirmation if the destination already has a file with the same name.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING"}, "destination": {"type": "STRING"}}, "required": ["source", "destination"]}}
     ]
 }]
