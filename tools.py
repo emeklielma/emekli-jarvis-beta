@@ -95,6 +95,58 @@ def get_time_and_date():
     now = datetime.datetime.now()
     return now.strftime("The current date is %B %d, %Y, and the time is %I:%M %p.")
 
+# Kapatılması ASLA izin verilmeyecek kritik Windows süreçleri — kapatılırlarsa
+# masaüstü/oturum/servisler çöker. Karşılaştırma case-insensitive ve .exe'siz
+# taban isim üzerinden yapılır.
+_CRITICAL_PROCESS_BLOCKLIST = {
+    "explorer", "csrss", "wininit", "winlogon", "services", "lsass", "svchost", "system",
+}
+
+# Belge/proje düzenleyen, kaydedilmemiş çalışma kaybı riski yüksek uygulamalar —
+# bunlar için taskkill'den önce kullanıcı onayı istenir. Kritik sistem süreci
+# değiller (kapatılmaları güvenli), sadece "veri kaybı" riski taşıyorlar.
+_UNSAVED_WORK_RISK_APPS = {
+    "winword", "excel", "powerpoint", "code", "notepad++", "photoshop",
+    "illustrator", "premiere", "aftereffects", "blender", "devenv",
+    "pycharm64", "idea64",
+}
+
+def close_application(app_name):
+    """taskkill /IM {app}.exe /F ile tek bir uygulamayı kapatır.
+
+    run_terminal_command'a hiç gitmez — sabit bir komut şablonu ve kritik
+    süreç blocklist'i ile dar kapsamlı, kendi başına güvenli bir tool.
+    _UNSAVED_WORK_RISK_APPS'teki uygulamalar için mevcut onay mekanizması
+    (pending_approvals) üzerinden kullanıcı onayı istenir.
+    """
+    base_name = app_name.strip()
+    if base_name.lower().endswith(".exe"):
+        base_name = base_name[:-4]
+
+    if base_name.lower() in _CRITICAL_PROCESS_BLOCKLIST:
+        return f"Reddedildi: '{base_name}' kritik bir sistem süreci, kapatılamaz."
+
+    if not base_name:
+        return "Reddedildi: Uygulama adı boş."
+
+    if base_name.lower() in _UNSAVED_WORK_RISK_APPS:
+        friendly_message = f"'{base_name}' kapatılsın mı? Kaydedilmemiş değişiklikler kaybolabilir."
+        approved, reason = _await_approval(friendly_message)
+        if not approved:
+            return f"Uygulama kapatılmadı: {reason}"
+
+    try:
+        result = subprocess.run(
+            ["taskkill", "/IM", f"{base_name}.exe", "/F"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            return f"Successfully closed {base_name}."
+        else:
+            return f"Command failed: {result.stderr.strip() or result.stdout.strip()}"
+    except Exception as e:
+        return f"Error closing application: {e}"
+
 def _await_approval(command):
     """Onay isteğini UI'ya gönderir ve kullanıcı yanıtını (approve/deny/timeout/
     interrupt) senkron olarak bekler. Dönüş: (approved: bool, reason: str|None).
@@ -161,6 +213,7 @@ TOOL_MAP = {
     "open_website": open_website,
     "search_youtube": search_youtube,
     "open_application": open_application,
+    "close_application": close_application,
     "get_time_and_date": get_time_and_date,
     "run_terminal_command": run_terminal_command,
     "press_keys": press_keys,
@@ -172,6 +225,7 @@ GEMINI_TOOLS = [{
         {"name": "open_website", "description": "Opens a website URL.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}}, "required": ["url"]}},
         {"name": "search_youtube", "description": "Searches YouTube.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
         {"name": "open_application", "description": "Opens a local Windows application.", "parameters": {"type": "OBJECT", "properties": {"app_name": {"type": "STRING"}}, "required": ["app_name"]}},
+        {"name": "close_application", "description": "Force-closes a running local Windows application/process by name (e.g. 'notepad', 'spotify', 'chrome'). Use this when the user asks to close, quit, kill, or stop a specific app. Cannot close critical system processes (explorer, services, lsass, etc.) — those requests are always refused.", "parameters": {"type": "OBJECT", "properties": {"app_name": {"type": "STRING", "description": "The process/app name, with or without the .exe extension (e.g. 'notepad' or 'notepad.exe')."}}, "required": ["app_name"]}},
         {"name": "get_time_and_date", "description": "Gets current time.", "parameters": {"type": "OBJECT"}},
         {"name": "run_terminal_command", "description": "Runs a PowerShell command.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
         {"name": "press_keys", "description": "Simulates keyboard presses (e.g. ctrl+c).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "STRING"}}, "required": ["keys"]}},
