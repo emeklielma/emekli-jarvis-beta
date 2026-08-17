@@ -147,13 +147,35 @@ def close_application(app_name):
     except Exception as e:
         return f"Error closing application: {e}"
 
+_TR_LOWER_MAP = str.maketrans({
+    "İ": "i", "I": "i", "ı": "i",
+    "Ş": "s", "ş": "s", "Ğ": "g", "ğ": "g",
+    "Ü": "u", "ü": "u", "Ö": "o", "ö": "o",
+    "Ç": "c", "ç": "c",
+})
+
+
+def _normalize_tr(s):
+    """Türkçe karakterleri (İ/I/ı, ş, ğ, ü, ö, ç) ASCII eşdeğerlerine indirger
+    ve küçük harfe çevirir. Python'un locale-bağımsız str.lower()'ı "İ" için
+    ortama göre "i" veya "i" + kombine nokta (U+0307) üretebildiğinden —
+    ki bu ikisi birbirine eşit değildir — klasör adı ve arama sorgusu
+    karşılaştırmalarında ham .lower() yerine bu fonksiyon kullanılır.
+    """
+    if not s:
+        return ""
+    return s.translate(_TR_LOWER_MAP).lower()
+
+
 # search_files, move_file ve copy_file'ın izin verdiği tek klasör kümesi.
-# Path traversal veya mutlak yol ile bu klasörlerin dışına çıkmak her zaman
-# reddedilir (fail-closed) — bkz. _resolve_within_allowed_folders.
+# Anahtarlar kasıtlı olarak ASCII (Türkçe karaktersiz) — _normalize_tr ile
+# karşılaştırıldığında ortam/Unicode-normalizasyon farklarından bağımsız
+# kalır. Path traversal veya mutlak yol ile bu klasörlerin dışına çıkmak
+# her zaman reddedilir (fail-closed) — bkz. _resolve_within_allowed_folders.
 _ALLOWED_FOLDERS = {
-    "masaüstü": os.path.join(os.path.expanduser("~"), "Desktop"),
+    "masaustu": os.path.join(os.path.expanduser("~"), "Desktop"),
     "belgeler": os.path.join(os.path.expanduser("~"), "Documents"),
-    "i̇ndirilenler": os.path.join(os.path.expanduser("~"), "Downloads"),
+    "indirilenler": os.path.join(os.path.expanduser("~"), "Downloads"),
     "resimler": os.path.join(os.path.expanduser("~"), "Pictures"),
 }
 
@@ -196,7 +218,7 @@ def search_files(query, folder=None):
         return "Reddedildi: Arama sorgusu boş."
 
     if folder:
-        key = folder.strip().lower()
+        key = _normalize_tr(folder.strip())
         if key not in _ALLOWED_FOLDERS:
             return (
                 f"Reddedildi: '{folder}' izinli klasörlerden biri değil. "
@@ -206,7 +228,7 @@ def search_files(query, folder=None):
     else:
         search_roots = _ALLOWED_FOLDERS
 
-    query_lower = query.strip().lower()
+    query_lower = _normalize_tr(query.strip())
     matches = []
     for root in search_roots.values():
         if not os.path.isdir(root):
@@ -218,7 +240,7 @@ def search_files(query, folder=None):
                 dirnames[:] = []
                 continue
             for name in filenames:
-                if query_lower in name.lower():
+                if query_lower in _normalize_tr(name):
                     matches.append(os.path.join(dirpath, name))
                     if len(matches) >= 50:
                         break
@@ -382,7 +404,7 @@ GEMINI_TOOLS = [{
         {"name": "run_terminal_command", "description": "Runs a PowerShell command.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
         {"name": "press_keys", "description": "Simulates keyboard presses (e.g. ctrl+c).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "STRING"}}, "required": ["keys"]}},
         {"name": "type_text", "description": "Simulates typing.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}}, "required": ["text"]}},
-        {"name": "search_files", "description": "Searches for files by name within the user's standard folders (Desktop, Documents, Downloads, Pictures). Cannot search outside these folders.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "Substring to match against file names."}, "folder": {"type": "STRING", "description": "Optional: limit the search to one folder ('masaüstü', 'belgeler', 'i̇ndirilenler', 'resimler'). If omitted, searches all four."}}, "required": ["query"]}},
+        {"name": "search_files", "description": "Searches for files by name within the user's standard folders (Desktop, Documents, Downloads, Pictures). Cannot search outside these folders.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "Substring to match against file names."}, "folder": {"type": "STRING", "description": "Optional: limit the search to one folder ('masaustu', 'belgeler', 'indirilenler', 'resimler' — Turkish characters are normalized automatically). If omitted, searches all four."}}, "required": ["query"]}},
         {"name": "move_file", "description": "Moves a file between the user's standard folders (Desktop, Documents, Downloads, Pictures). Asks for confirmation if the destination already has a file with the same name.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING"}, "destination": {"type": "STRING"}}, "required": ["source", "destination"]}},
         {"name": "copy_file", "description": "Copies a file between the user's standard folders (Desktop, Documents, Downloads, Pictures). Asks for confirmation if the destination already has a file with the same name.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING"}, "destination": {"type": "STRING"}}, "required": ["source", "destination"]}}
     ]
