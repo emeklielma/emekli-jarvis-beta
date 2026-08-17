@@ -8,9 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import ai_module as am
 import speech_module as sm
+import tools
 import queue
 
 ui_queue = queue.Queue()
+
+# run_terminal_command (tools.py) onay isteğini bu köprü üzerinden UI'ya
+# broadcast eder; ui_queue.put thread-safe olduğu için audio_listener_loop
+# thread'inden veya /api/chat threadpool thread'inden doğrudan çağrılabilir.
+tools.approval_request_sink = ui_queue.put
 
 app = FastAPI()
 
@@ -44,7 +50,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 MIC_ACTIVE = True
-INTERRUPT_FLAG = False
+# INTERRUPT_FLAG artık tools.py'de tutulur (tools.INTERRUPT_FLAG) — run_terminal_command'ın
+# onay bekleme döngüsü, server.py'yi import etmeden bu bayrağı okuyabilsin diye.
 
 def safe_broadcast(loop, message):
     try:
@@ -55,12 +62,12 @@ def safe_broadcast(loop, message):
 # Background thread to constantly listen for audio using Python!
 def audio_listener_loop():
     while True:
-        global MIC_ACTIVE, INTERRUPT_FLAG
+        global MIC_ACTIVE
         if not MIC_ACTIVE:
             time.sleep(0.5)
             continue
-            
-        INTERRUPT_FLAG = False
+
+        tools.INTERRUPT_FLAG = False
         
         # 1. Update UI to show we are listening via Python microphone
         ui_queue.put({"type": "status", "value": "LISTENING"})
@@ -72,7 +79,7 @@ def audio_listener_loop():
             # 2. This will block and use our flawless gapless queue to listen!
             text = sm.listen(on_speech_start=on_hearing)
             
-            if INTERRUPT_FLAG:
+            if tools.INTERRUPT_FLAG:
                 continue # User clicked interrupt!
                 
             if text:
@@ -85,7 +92,7 @@ def audio_listener_loop():
                 # 5. Generate AI response
                 response = am.generate_response(text)
                 
-                if INTERRUPT_FLAG:
+                if tools.INTERRUPT_FLAG:
                     continue # Interrupted during thinking!
                 
                 # 6. Generate Neural Voice and tell UI to play it!
@@ -143,7 +150,7 @@ import json
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    global MIC_ACTIVE, INTERRUPT_FLAG
+    global MIC_ACTIVE
     try:
         while True:
             # Receive commands from the UI
@@ -154,8 +161,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     MIC_ACTIVE = cmd.get("state", True)
                     print(f"Microphone Active: {MIC_ACTIVE}")
                 elif cmd.get("action") == "interrupt":
-                    INTERRUPT_FLAG = True
+                    tools.INTERRUPT_FLAG = True
                     print("User interrupted!")
+                elif cmd.get("action") in ("approve_command", "deny_command"):
+                    request_id = cmd.get("id")
+                    with tools.pending_approvals_lock:
+                        entry = tools.pending_approvals.get(request_id)
+                        if entry is not None:
+                            entry["approved"] = cmd.get("action") == "approve_command"
+                            entry["event"].set()
+                    # entry None ise: id bilinmiyor (zaten timeout/interrupt ile
+                    # temizlenmiş olabilir) — sessizce yok say, KeyError riski yok.
             except:
                 pass
     except WebSocketDisconnect:
