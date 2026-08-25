@@ -3,20 +3,25 @@ import asyncio
 import threading
 import subprocess
 import time
+import json
+import psutil
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import ai_module as am
-import speech_module as sm
-import tools
-import queue
 
-ui_queue = queue.Queue()
+# Import core modules
+from core import ai_module as am
+from core import speech_module as sm
+from core.state import state
 
-# run_terminal_command (tools.py) onay isteğini bu köprü üzerinden UI'ya
-# broadcast eder; ui_queue.put thread-safe olduğu için audio_listener_loop
-# thread'inden veya /api/chat threadpool thread'inden doğrudan çağrılabilir.
-tools.approval_request_sink = ui_queue.put
+# Preload tools (they auto-register themselves to tools.registry)
+import tools.system_tools
+import tools.browser_tools
+import tools.vision_tools
+import tools.memory_tools
+import tools.system_diagnostics
+from core import wake_word
+from core.tray import tray_manager
 
 app = FastAPI()
 
@@ -28,7 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -38,166 +42,171 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception as e:
+                print(f"[WS BROADCAST ERROR] {e}")
 
 manager = ConnectionManager()
+main_loop = None
 
-MIC_ACTIVE = True
-# INTERRUPT_FLAG artık tools.py'de tutulur (tools.INTERRUPT_FLAG) — run_terminal_command'ın
-# onay bekleme döngüsü, server.py'yi import etmeden bu bayrağı okuyabilsin diye.
-
-def safe_broadcast(loop, message):
+def safe_broadcast(message):
+    """Safely broadcasts a message from background threads."""
+    global main_loop
+    if main_loop is None or not main_loop.is_running():
+        return
     try:
-        loop.run_until_complete(manager.broadcast(message))
+        asyncio.run_coroutine_threadsafe(manager.broadcast(message), main_loop)
     except Exception as e:
-        print(f"Broadcast error (ignored): {e}")
+        print(f"[SAFE BROADCAST ERROR] {e}")
 
-# Background thread to constantly listen for audio using Python!
+async def process_user_input(text: str):
+    """Processes user text through the LLM stream, sends tokens to UI, and buffers for TTS."""
+    await manager.broadcast({"type": "log", "sender": "user", "text": f"USR: {text}"})
+    await manager.broadcast({"type": "status", "value": "THINKING"})
+    
+    # Send start marker for Jarvis response
+    await manager.broadcast({"type": "log", "sender": "sys", "text": "JRV: "})
+    
+    buffer = sm.SentenceBuffer()
+    
+    # Store the task in state so it can be cancelled
+    async def ai_stream():
+        try:
+            async for chunk in am.generate_response_stream(text):
+                if chunk["type"] == "token":
+                    await manager.broadcast({"type": "token", "content": chunk["content"]})
+                    await buffer.add_token(chunk["content"])
+                elif chunk["type"] == "tool_call":
+                    await manager.broadcast({"type": "tool_start", "name": chunk["name"], "args": chunk["args"]})
+                elif chunk["type"] == "tool_result":
+                    await manager.broadcast({"type": "tool_end", "name": chunk["name"], "success": True})
+                elif chunk["type"] == "error":
+                    await manager.broadcast({"type": "error", "message": chunk["content"]})
+                    
+            await buffer.flush()
+            await manager.broadcast({"type": "status", "value": "ONLINE"})
+        except asyncio.CancelledError:
+            print("[AI STREAM] Task cancelled by barge-in.")
+            await manager.broadcast({"type": "error", "message": "[Interrupted]"})
+            await manager.broadcast({"type": "status", "value": "ONLINE"})
+        except Exception as e:
+            print(f"[AI STREAM ERROR] {e}")
+            await manager.broadcast({"type": "error", "message": f"LLM Error: {str(e)}"})
+            await manager.broadcast({"type": "status", "value": "ONLINE"})
+
+    task = asyncio.create_task(ai_stream())
+    state.register_task("ai_stream_task", task)
+
+# Background thread for listening to the microphone
 def audio_listener_loop():
     while True:
-        global MIC_ACTIVE
-        if not MIC_ACTIVE:
+        if not state.mic_active:
             time.sleep(0.5)
             continue
-
-        tools.INTERRUPT_FLAG = False
-        
-        # 1. Update UI to show we are listening via Python microphone
-        ui_queue.put({"type": "status", "value": "LISTENING"})
-        
+            
         def on_hearing():
-            ui_queue.put({"type": "status", "value": "HEARING"})
+            safe_broadcast({"type": "status", "value": "HEARING"})
             
         try:
-            # 2. This will block and use our flawless gapless queue to listen!
             text = sm.listen(on_speech_start=on_hearing)
-            
-            if tools.INTERRUPT_FLAG:
-                continue # User clicked interrupt!
-                
             if text:
-                # 3. User said something, send it to UI
-                ui_queue.put({"type": "log", "sender": "user", "text": f"USR: {text}"})
-                
-                # 4. Change UI status to thinking
-                ui_queue.put({"type": "status", "value": "THINKING"})
-                
-                # 5. Generate AI response
-                response = am.generate_response(text)
-                
-                if tools.INTERRUPT_FLAG:
-                    continue # Interrupted during thinking!
-                
-                # 6. Generate Neural Voice and tell UI to play it!
-                timestamp = int(time.time() * 1000)
-                clean_text = response.replace('"', '').replace("'", "")
-                
-                try:
-                    os.makedirs("frontend/public", exist_ok=True)
-                    subprocess.run(["python", "-m", "edge_tts", "--text", clean_text, "--voice", "en-GB-RyanNeural", "--write-media", "frontend/public/response.mp3"], check=True)
-                    
-                    ui_queue.put({
-                        "type": "log", 
-                        "sender": "sys", 
-                        "text": f"JRV: {response}",
-                        "speak": True,
-                        "audioUrl": f"/response.mp3?t={timestamp}"
-                    })
-                except Exception as tts_err:
-                    print("TTS Error:", tts_err)
-                    ui_queue.put({
-                        "type": "log", 
-                        "sender": "sys", 
-                        "text": f"JRV: {response}",
-                        "speak": True
-                    })
-                
+                print(f"[AUDIO] Heard: {text}")
+                # Dispatch the text processing into the main async loop
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(process_user_input(text), main_loop)
         except Exception as e:
-            print(f"Audio Error: {e}")
-            ui_queue.put({"type": "log", "sender": "err", "text": f"ERR: Microphone failure."})
-            time.sleep(2) # Wait a bit before retrying if mic crashes
+            print(f"[AUDIO LOOP ERROR] {e}")
+            time.sleep(1)
 
-async def broadcast_worker():
-    """Reads from ui_queue and safely broadcasts to websockets on the main event loop."""
+def vitals_loop():
+    last_net = psutil.net_io_counters()
+    last_time = time.time()
     while True:
         try:
-            while not ui_queue.empty():
-                msg = ui_queue.get_nowait()
-                await manager.broadcast(msg)
-        except Exception:
-            pass
-        await asyncio.sleep(0.1)
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory().percent
+            now_net = psutil.net_io_counters()
+            now_time = time.time()
+            dt = now_time - last_time
+            if dt > 0:
+                speed_kb = ((now_net.bytes_recv - last_net.bytes_recv) + (now_net.bytes_sent - last_net.bytes_sent)) / dt / 1024
+            else:
+                speed_kb = 0
+            last_net = now_net
+            last_time = now_time
+
+            safe_broadcast({
+                "type": "vitals",
+                "cpu": cpu,
+                "ram": ram,
+                "net": speed_kb
+            })
+        except Exception as e:
+            print(f"[VITALS ERROR] {e}")
+        time.sleep(1)
 
 @app.on_event("startup")
 async def startup_event():
-    # Start the robust UI broadcast worker in the main async loop
-    asyncio.create_task(broadcast_worker())
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     
-    # Start the background audio listener thread automatically when server starts
-    thread = threading.Thread(target=audio_listener_loop, daemon=True)
-    thread.start()
-
-# Live WebSocket for real-time UI updates
-import json
+    # Start the system tray
+    tray_manager.start()
+    
+    # Start the async TTS worker
+    asyncio.create_task(sm.speak_sentence_worker())
+    
+    # Start background threads
+    threading.Thread(target=audio_listener_loop, daemon=True).start()
+    threading.Thread(target=vitals_loop, daemon=True).start()
+    threading.Thread(target=wake_word.start_wake_word_thread, args=(main_loop, manager.broadcast), daemon=True).start()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    global MIC_ACTIVE
     try:
         while True:
-            # Receive commands from the UI
             data = await websocket.receive_text()
             try:
                 cmd = json.loads(data)
-                if cmd.get("action") == "toggle_mic":
-                    MIC_ACTIVE = cmd.get("state", True)
-                    print(f"Microphone Active: {MIC_ACTIVE}")
-                elif cmd.get("action") == "interrupt":
-                    tools.INTERRUPT_FLAG = True
-                    print("User interrupted!")
-                elif cmd.get("action") in ("approve_command", "deny_command"):
-                    request_id = cmd.get("id")
-                    with tools.pending_approvals_lock:
-                        entry = tools.pending_approvals.get(request_id)
-                        if entry is not None:
-                            entry["approved"] = cmd.get("action") == "approve_command"
-                            entry["event"].set()
-                    # entry None ise: id bilinmiyor (zaten timeout/interrupt ile
-                    # temizlenmiş olabilir) — sessizce yok say, KeyError riski yok.
-            except:
-                pass
+                action = cmd.get("action")
+                if action == "toggle_mic":
+                    state.mic_active = cmd.get("state", True)
+                elif action == "interrupt":
+                    state.cancel_all_barge_in_tasks()
+                    sm.clear_speech_queue()
+                elif action == "chat":
+                    text = cmd.get("text", "")
+                    if text:
+                        await process_user_input(text)
+            except json.JSONDecodeError as e:
+                print(f"[WS JSON ERROR] Could not parse message: {data}")
+            except Exception as e:
+                print(f"[WS LOGIC ERROR] {e}")
+                await manager.broadcast({"type": "error", "message": f"Server Error: {str(e)}"})
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
-# Standard endpoint for manual typing
-class ChatRequest(BaseModel):
-    text: str
-
-@app.post("/api/chat")
-def chat(request: ChatRequest):
-    try:
-        response = am.generate_response(request.text)
-        
-        timestamp = int(time.time() * 1000)
-        clean_text = response.replace('"', '').replace("'", "")
-        os.makedirs("frontend/public", exist_ok=True)
-        subprocess.run(["python", "-m", "edge_tts", "--text", clean_text, "--voice", "en-GB-RyanNeural", "--write-media", "frontend/public/response.mp3"], check=True)
-        
-        return {"response": response, "audioUrl": f"/response.mp3?t={timestamp}"}
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[WS FATAL ERROR] {e}")
+        manager.disconnect(websocket)
+
+@app.get("/api/minimize")
+async def minimize_ui():
+    await manager.broadcast({"type": "action", "value": "minimize"})
+    return {"status": "ok"}
+
+@app.get("/api/protocol/{protocol_name}")
+async def set_protocol(protocol_name: str):
+    state.protocol = protocol_name
+    await manager.broadcast({"type": "action", "value": "protocol", "protocol_name": protocol_name})
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
-    print("=======================================")
-    print(" JARVIS BRAIN ONLINE (FastAPI + WebSockets)")
-    print("=======================================")
     uvicorn.run(app, host="0.0.0.0", port=8000)

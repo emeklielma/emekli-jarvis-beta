@@ -1,66 +1,111 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
 
+const themes = [
+  { name: 'Cyan', color: '#00e5ff', rgb: '0, 229, 255' },
+  { name: 'Red', color: '#ff2a2a', rgb: '255, 42, 42' },
+  { name: 'Gold', color: '#ffaa00', rgb: '255, 170, 0' },
+  { name: 'Green', color: '#00ff88', rgb: '0, 255, 136' },
+  { name: 'Purple', color: '#b829ff', rgb: '184, 41, 255' },
+];
+
 function App() {
-  const [messages, setMessages] = useState([{ sender: 'sys', text: 'System Initialized. JARVIS Online.' }])
-  const [status, setStatus] = useState('ONLINE') // ONLINE, LISTENING, THINKING
+  const [currentTheme, setCurrentTheme] = useState(themes[0])
+  const [messages, setMessages] = useState([{ sender: 'sys', text: 'SYS: JARVIS UI online.' }])
+  const [activeStreamText, setActiveStreamText] = useState('')
+  const [activeTool, setActiveTool] = useState(null)
+  
+  const [status, setStatus] = useState('ONLINE') // ONLINE, LISTENING, HEARING, THINKING
   const [inputText, setInputText] = useState('')
   const [cpuUsage, setCpuUsage] = useState(24)
   const [ramUsage, setRamUsage] = useState(48)
   const [netSpeed, setNetSpeed] = useState(13)
   const [isMicActive, setIsMicActive] = useState(true)
   const [wsInstance, setWsInstance] = useState(null)
-  // Onay bekleyen komutlar id bazlı bir kuyrukta tutulur — tek bir "aktif"
-  // onay state'i, aynı anda birden fazla confirm_request geldiğinde birini
-  // sessizce ezerdi (bkz. Faz 2 tasarım notları).
-  const [pendingConfirms, setPendingConfirms] = useState([])
-  const [currentTime, setCurrentTime] = useState('')
+  
   const messagesEndRef = useRef(null)
+  const chatContainerRef = useRef(null)
+  const isScrolledUpRef = useRef(false)
+  const streamCompleteRef = useRef(false)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
+  const [isBooting, setIsBooting] = useState(true)
+  const [bootText, setBootText] = useState('')
+  const [protocol, setProtocol] = useState('normal')
+  const [countdown, setCountdown] = useState(null)
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
-
-  // Clock Update
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentTime(now.toLocaleString('en-US', { 
-        weekday: 'short', month: 'short', day: 'numeric', 
-        hour: '2-digit', minute:'2-digit', second:'2-digit'
-      }));
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      setProtocol('normal');
+      setCurrentTheme(themes[0]);
+      try {
+        if (window.pywebview) window.pywebview.api.minimize();
+        else fetch('http://localhost:8000/api/minimize');
+      } catch (err) {}
+      return;
     }
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
+    const timer = setTimeout(() => setCountdown(prev => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  useEffect(() => {
+    const bootSteps = [
+      "INITIATING MARK L PROTOCOLS...",
+      "LOADING AI CORE...",
+      "CALIBRATING NEURAL NETWORKS...",
+      "CONNECTING TO SATELLITE UPLINK...",
+      "AUDIO DRIVERS ONLINE.",
+      "WELCOME HOME, SIR."
+    ];
+    let step = 0;
+    const interval = setInterval(() => {
+      setBootText(prev => prev + "\n" + bootSteps[step]);
+      step++;
+      if (step >= bootSteps.length) {
+        clearInterval(interval);
+        setTimeout(() => setIsBooting(false), 1200);
+      }
+    }, 500);
     return () => clearInterval(interval);
   }, []);
 
-  // Fake system monitor jitter for dynamic feel
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCpuUsage(prev => Math.max(10, Math.min(95, prev + (Math.random() * 14 - 7))))
-      setRamUsage(prev => Math.max(30, Math.min(85, prev + (Math.random() * 6 - 3))))
-      setNetSpeed(prev => Math.max(1, Math.min(100, prev + (Math.random() * 40 - 20))))
-    }, 1500)
-    return () => clearInterval(interval)
-  }, [])
+    document.documentElement.style.setProperty('--theme-color', currentTheme.color)
+    document.documentElement.style.setProperty('--theme-color-rgb', currentTheme.rgb)
+  }, [currentTheme])
 
-  // Audio Playback
-  const speak = (text, audioUrl) => {
-    if (audioUrl) {
-      const audio = new Audio(audioUrl);
-      audio.play();
-    } else if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      window.speechSynthesis.speak(utterance);
+  const handleScroll = () => {
+    if (chatContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+      isScrolledUpRef.current = scrollHeight - scrollTop > clientHeight + 50;
     }
-  }
+  };
 
-  // Connect to Python Brain via WebSocket
+  const scrollToBottom = useCallback(() => {
+    if (!isScrolledUpRef.current) {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, activeStreamText, activeTool, scrollToBottom])
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'F11') {
+        if (window.pywebview) {
+          window.pywebview.api.toggle_fullscreen();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   useEffect(() => {
     let ws;
     let reconnectInterval;
@@ -69,28 +114,53 @@ function App() {
       ws = new WebSocket('ws://localhost:8000/ws');
       
       ws.onopen = () => {
-        setMessages(prev => [...prev, { sender: 'sys', text: 'Neural Link Established. Microphone active.' }])
+        setMessages(prev => [...prev, { sender: 'sys', text: 'SYS: Python Brain Connected. Microphone active.' }])
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'status') {
+        if (data.type === 'action' && data.value === 'minimize') {
+          try {
+            if (window.pywebview) {
+              window.pywebview.api.minimize();
+            } else {
+              const { ipcRenderer } = window.require('electron');
+              ipcRenderer.send('minimize-window');
+            }
+          } catch (err) {}
+        } else if (data.type === 'action' && data.value === 'protocol') {
+          setProtocol(data.protocol_name);
+          if (data.protocol_name === 'lockdown') setCurrentTheme(themes[1]);
+          else if (data.protocol_name === 'normal') { setCurrentTheme(themes[0]); setCountdown(null); }
+          else if (data.protocol_name === 'party') setCurrentTheme(themes[4]);
+          else if (data.protocol_name === 'decryption') setCurrentTheme(themes[3]);
+          else if (data.protocol_name === 'destruct') { setCurrentTheme(themes[1]); setCountdown(10); }
+          else if (data.protocol_name === 'satellite') setCurrentTheme(themes[0]);
+        } else if (data.type === 'vitals') {
+          setCpuUsage(data.cpu);
+          setRamUsage(data.ram);
+          setNetSpeed(data.net);
+        } else if (data.type === 'status') {
           setStatus(data.value);
-        } else if (data.type === 'log') {
-          let text = data.text;
-          if (text.startsWith('JRV: ')) text = text.replace('JRV: ', '');
-          setMessages(prev => [...prev, { sender: data.sender, text: text }]);
-          if (data.speak) {
-            speak(text, data.audioUrl);
+          if (data.value === 'ONLINE') {
+              streamCompleteRef.current = true;
           }
-        } else if (data.type === 'confirm_request') {
-          setPendingConfirms(prev => [...prev, { id: data.id, command: data.command }]);
+        } else if (data.type === 'log') {
+          setMessages(prev => [...prev, { sender: data.sender, text: data.text }]);
+        } else if (data.type === 'token') {
+          setActiveStreamText(prev => prev + data.content);
+        } else if (data.type === 'tool_start') {
+          setActiveTool(`Running: ${data.name}...`);
+        } else if (data.type === 'tool_end') {
+          setActiveTool(null);
+        } else if (data.type === 'error') {
+          setMessages(prev => [...prev, { sender: 'err', text: `ERR: ${data.message}` }]);
         }
       };
 
       ws.onclose = () => {
-        setMessages(prev => [...prev, { sender: 'err', text: 'Connection Lost. Attempting to reconnect...' }])
+        setMessages(prev => [...prev, { sender: 'err', text: 'ERR: Brain Disconnected. Reconnecting...' }])
         reconnectInterval = setTimeout(connect, 3000);
       };
       
@@ -105,6 +175,19 @@ function App() {
     }
   }, []);
 
+  // Flush active stream to messages when status goes ONLINE
+  useEffect(() => {
+      if (streamCompleteRef.current && status === 'ONLINE') {
+          if (activeStreamText.trim() !== '') {
+              setMessages(prev => [...prev, { sender: 'sys', text: `JRV: ${activeStreamText}` }]);
+              setActiveStreamText('');
+          }
+          setActiveTool(null);
+          streamCompleteRef.current = false;
+      }
+  }, [status, activeStreamText]);
+
+
   const toggleMic = () => {
     const newState = !isMicActive;
     setIsMicActive(newState);
@@ -113,15 +196,7 @@ function App() {
     }
   }
 
-  const resolveConfirm = (id, approved) => {
-    setPendingConfirms(prev => prev.filter(c => c.id !== id));
-    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
-      wsInstance.send(JSON.stringify({ action: approved ? "approve_command" : "deny_command", id }));
-    }
-  }
-
   const interrupt = () => {
-    window.speechSynthesis.cancel();
     if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
       wsInstance.send(JSON.stringify({ action: "interrupt" }));
     }
@@ -129,177 +204,195 @@ function App() {
 
   const sendMessage = async (text) => {
     if (!text.trim()) return
-    setStatus('THINKING')
-    setMessages(prev => [...prev, { sender: 'user', text: text }])
-    
-    try {
-      const response = await fetch('http://localhost:8000/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text })
-      })
-      const data = await response.json()
-      const reply = data.response || data.error
-      setMessages(prev => [...prev, { sender: 'sys', text: reply }])
-      speak(reply, data.audioUrl)
-    } catch (err) {
-      setMessages(prev => [...prev, { sender: 'err', text: "Failed to reach intelligence core." }])
+    if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+        wsInstance.send(JSON.stringify({ action: "chat", text: text }));
     }
-    setStatus('ONLINE')
   }
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
       sendMessage(inputText)
       setInputText('')
+      isScrolledUpRef.current = false; // force scroll down on user input
     }
   }
 
+  if (isBooting) {
+    return (
+      <div className="boot-screen" style={{
+        height: '100vh', width: '100vw', backgroundColor: '#000', 
+        color: 'var(--theme-color)', fontFamily: 'monospace', padding: '50px', 
+        fontSize: '1.2rem', whiteSpace: 'pre-line', textShadow: '0 0 10px var(--theme-color)'
+      }}>
+        {bootText}
+      </div>
+    )
+  }
+
   return (
-    <>
-      {/* CONFIRM QUEUE - onay bekleyen komutlar, id bazlı, birden fazla aynı anda görünebilir.
-          .dashboard'un dışında render edilir çünkü .dashboard'un overflow:hidden'i
-          içerideki position:absolute/fixed elemanları kırpar. */}
-      {pendingConfirms.length > 0 && (
-        <div className="confirm-queue">
-          {pendingConfirms.map(c => (
-            <div key={c.id} className="confirm-card">
-              <div className="confirm-header">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                Onay Gerekli
-              </div>
-              <code className="confirm-command">{c.command}</code>
-              <div className="confirm-actions">
-                <button className="btn-confirm approve" onClick={() => resolveConfirm(c.id, true)}>Onayla</button>
-                <button className="btn-confirm deny" onClick={() => resolveConfirm(c.id, false)}>Reddet</button>
-              </div>
-            </div>
-          ))}
+    <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''} ${protocol === 'decryption' ? 'matrix-mode' : ''}`}>
+      
+      <div className="hud-crosshair top-left"></div>
+      <div className="hud-crosshair top-right"></div>
+      <div className="hud-crosshair bottom-left"></div>
+      <div className="hud-crosshair bottom-right"></div>
+
+      {countdown !== null && (
+        <div className="destruct-overlay">
+          <div className="destruct-text">SELF DESTRUCT IN</div>
+          <div className="destruct-timer">{countdown}</div>
         </div>
       )}
 
-      <div className="dashboard">
-      {/* TOP BAR */}
       <div className="top-bar">
-        <div className="brand">JARVIS // NEXUS CORE</div>
-        <div className="time-widget">{currentTime}</div>
+        <div>JARVIS - MARK XLIX</div>
+        <div className="top-right">
+          <div className="theme-swatches" style={{ display: 'flex', gap: '8px', marginRight: '15px', alignItems: 'center' }}>
+            {themes.map(t => (
+              <div 
+                key={t.name}
+                onClick={() => setCurrentTheme(t)}
+                style={{
+                  width: '14px', height: '14px', borderRadius: '50%', 
+                  backgroundColor: t.color, cursor: 'pointer',
+                  border: currentTheme.name === t.name ? '2px solid white' : '1px solid transparent',
+                  boxShadow: `0 0 8px ${t.color}`
+                }}
+                title={t.name}
+              />
+            ))}
+          </div>
+          <span>_</span>
+          <span>□</span>
+          <span>X</span>
+          <div className="time">20:04:23<br/>Wed 12 Aug 2026</div>
+        </div>
       </div>
 
       <div className="main-content">
         
-        {/* LEFT PANEL - STATS */}
         <div className="panel left-panel">
-          <div className="panel-header">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-            System Telemetry
-          </div>
+          <div className="panel-title">▼ SYS MONITOR</div>
           
-          <div className="stat-card">
-            <div className="stat-header">
-              <span style={{color: 'var(--text-muted)'}}>Neural CPU</span>
-              <span className="stat-value" style={{color: 'var(--accent-primary)'}}>{cpuUsage.toFixed(1)}%</span>
-            </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{width: `${cpuUsage}%`, backgroundColor: 'var(--accent-primary)'}}></div>
-            </div>
+          <div className="stat-box">
+            <div className="stat-label"><span>CPU</span> <span className="stat-value">{cpuUsage.toFixed(0)}%</span></div>
+            <div className="progress-bar"><div className="progress cyan" style={{width: `${cpuUsage}%`}}></div></div>
           </div>
 
-          <div className="stat-card">
-            <div className="stat-header">
-              <span style={{color: 'var(--text-muted)'}}>Memory Core</span>
-              <span className="stat-value" style={{color: 'var(--accent-secondary)'}}>{ramUsage.toFixed(1)}%</span>
-            </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{width: `${ramUsage}%`, backgroundColor: 'var(--accent-secondary)'}}></div>
-            </div>
+          <div className="stat-box">
+            <div className="stat-label"><span>RAM</span> <span className="stat-value" style={{color: '#ffcc00'}}>{ramUsage.toFixed(0)}%</span></div>
+            <div className="progress-bar"><div className="progress yellow" style={{width: `${ramUsage}%`}}></div></div>
           </div>
 
-          <div className="stat-card">
-            <div className="stat-header">
-              <span style={{color: 'var(--text-muted)'}}>Network I/O</span>
-              <span className="stat-value" style={{color: 'var(--success)'}}>{netSpeed.toFixed(0)} MB/s</span>
-            </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{width: `${Math.min(100, netSpeed * 2)}%`, backgroundColor: 'var(--success)'}}></div>
-            </div>
+          <div className="stat-box">
+            <div className="stat-label"><span>NET</span> <span className="stat-value">{netSpeed.toFixed(0)}KB/s</span></div>
+            <div className="progress-bar"><div className="progress cyan" style={{width: `${Math.min(netSpeed * 2, 100)}%`}}></div></div>
           </div>
           
-          <div style={{marginTop: 'auto'}}>
-            <div className="panel-header" style={{marginTop: '30px'}}>Active Modules</div>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
-              <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem'}}>
-                <span style={{color: 'var(--text-muted)'}}>Speech Synthesis</span>
-                <span style={{color: 'var(--success)'}}>ONLINE</span>
-              </div>
-              <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem'}}>
-                <span style={{color: 'var(--text-muted)'}}>OpenJarvis Core</span>
-                <span style={{color: 'var(--success)'}}>INTEGRATED</span>
-              </div>
-              <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem'}}>
-                <span style={{color: 'var(--text-muted)'}}>Local Tools</span>
-                <span style={{color: 'var(--success)'}}>READY</span>
-              </div>
+          <div className="sys-info" style={{marginTop: '20px'}}>
+            UP 00:21<br/>
+            PROC 280<br/>
+            OS WIN
+          </div>
+
+          <div className="status-badges" style={{marginTop: '20px'}}>
+            <div className="badge active">AI CORE<br/>ACTIVE</div>
+            <div className="badge active">SEC<br/>CLEARED</div>
+            <div className={`badge ${protocol !== 'normal' ? 'active' : 'outline'}`} style={{color: protocol === 'lockdown' ? 'red' : ''}}>
+              PROTOCOL<br/>{protocol.toUpperCase()}
             </div>
           </div>
         </div>
 
-        {/* CENTER PANEL - ORB */}
-        <div className="panel center-panel">
-          <div className="ai-core-container">
-            <div className="ring ring-1"></div>
-            <div className="ring ring-2"></div>
-            <div className="ring ring-3"></div>
-            <div className={`orb ${status}`}></div>
+        <div className="panel center-panel hud-box">
+          <div className="hud-corner top-left"></div>
+          <div className="hud-corner top-right"></div>
+          <div className="hud-corner bottom-left"></div>
+          <div className="hud-corner bottom-right"></div>
+          
+          <div className="hud-coordinates">
+            SYS.LOC: 34.0522° N, 118.2437° W <br/>
+            ALT: 1,234 FT | V: 0.00 Mach <br/>
+            TARGET: ACQUIRED
           </div>
-          <div className={`status-text ${status}`}>{status}</div>
+
+          <h1 className="jarvis-title">JARVIS</h1>
+          <h3 className="jarvis-subtitle">Just A Rather Very Intelligent System</h3>
+
+          {protocol === 'satellite' ? (
+            <div className="radar-container">
+              <div className="radar-circle"></div>
+              <div className="radar-line"></div>
+              <div className="radar-target" style={{top: '30%', left: '40%'}}></div>
+              <div className="radar-target" style={{top: '60%', left: '70%'}}></div>
+              <div className="radar-text">SATELLITE UPLINK ESTABLISHED<br/>SCANNING...</div>
+            </div>
+          ) : (
+            <div className={`arc-reactor ${status}`}>
+              <div className="arc-core"></div>
+              <div className="arc-ring ring-outer"></div>
+              <div className="arc-ring ring-mid"></div>
+              <div className="arc-ring ring-inner"></div>
+              <div className="arc-ring ring-ultra-inner"></div>
+              
+              <div className="radar-status">
+                <span className="blink">●</span> {status}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* RIGHT PANEL - CHAT & INPUT */}
         <div className="panel right-panel">
-          <div className="panel-header">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            Communication Log
-          </div>
+          <div className="panel-title">▼ ACTIVITY LOG</div>
           
-          <div className="chat-container">
+          <div className="activity-log" ref={chatContainerRef} onScroll={handleScroll}>
             {messages.map((msg, i) => (
-              <div key={i} className={`message ${msg.sender}`}>
+              <div key={i} className={`log-entry ${msg.sender}`}>
                 {msg.text}
               </div>
             ))}
+            
+            {/* Active Stream Rendering */}
+            {activeStreamText && (
+               <div className="log-entry sys stream-active">
+                  JRV: {activeStreamText} <span className="blink">|</span>
+               </div>
+            )}
+            {activeTool && (
+               <div className="log-entry sys tool-active" style={{color: 'var(--theme-color)', fontStyle: 'italic'}}>
+                  [ {activeTool} ]
+               </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="input-wrapper">
+          <div className="panel-title" style={{marginTop: '20px'}}>▼ COMMAND INPUT</div>
+          <div className="input-group">
             <input 
               type="text" 
-              placeholder="Ask JARVIS a question or give a command..." 
+              placeholder="Type a command or question..." 
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button className="btn-send" onClick={() => {sendMessage(inputText); setInputText('')}}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-            </button>
+            <button className="btn-send" onClick={() => {sendMessage(inputText); setInputText(''); isScrolledUpRef.current = false;}}>▶</button>
           </div>
           
-          <div className="controls">
-            <button className={`btn-control ${isMicActive ? 'active-mic' : ''}`} onClick={toggleMic}>
-              {isMicActive ? (
-                 <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg> Mic Active</>
-              ) : (
-                <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg> Mic Muted</>
-              )}
-            </button>
-            <button className="btn-control danger" onClick={interrupt}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop (ESC)
+          <div className="action-buttons">
+            <button className="btn btn-red" onClick={interrupt}>✋ INTERRUPT (ESC)</button>
+            <button className={`btn ${isMicActive ? 'btn-green' : 'btn-red'} active`} onClick={toggleMic}>
+              {isMicActive ? '🎤 PYTHON MICROPHONE ACTIVE' : '🔇 MICROPHONE MUTED'}
             </button>
           </div>
         </div>
 
       </div>
+      
+      <div className="footer">
+        <div>[F4] Menu · [F11] Fullscreen</div>
+        <div style={{color: 'var(--text-dim)'}}>By FatihMakes (Remastered)</div>
       </div>
-    </>
+    </div>
   )
 }
 
