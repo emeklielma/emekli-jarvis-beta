@@ -613,3 +613,116 @@ body {
 .hud-crosshair.bottom-left { bottom: 30px; left: 30px; border-right: none; border-top: none; }
 .hud-crosshair.bottom-right { bottom: 30px; right: 30px; border-left: none; border-top: none; }
 
+/* --- NEW PHASE 3 FEATURES --- */
+
+/* AUDIO VISUALIZER CONTAINER */
+.audio-visualizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 40px;
+  justify-content: center;
+  margin-top: 15px;
+}
+
+/* ENVIRONMENTAL MODULE */
+.env-module {
+  margin-top: 20px;
+  border-top: 1px dashed rgba(var(--theme-color-rgb), 0.3);
+  padding-top: 15px;
+}
+.env-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.env-item {
+  background: rgba(var(--theme-color-rgb), 0.05);
+  border: 1px solid rgba(var(--theme-color-rgb), 0.2);
+  padding: 10px;
+  text-align: center;
+  border-radius: 4px;
+}
+.env-value {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: var(--yellow);
+  text-shadow: 0 0 5px var(--yellow);
+}
+.env-label {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 5px;
+  letter-spacing: 1px;
+}
+
+/* MISSION DIRECTIVES */
+.directive-module {
+  margin-bottom: 20px;
+}
+.directive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.directive-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(var(--theme-color-rgb), 0.05);
+  padding: 8px 12px;
+  border-left: 3px solid var(--theme-color);
+  font-size: 0.8rem;
+  position: relative;
+  overflow: hidden;
+}
+.directive-item::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -100%;
+  width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(var(--theme-color-rgb), 0.2), transparent);
+  animation: directive-scan 3s linear infinite;
+  animation-delay: calc(var(--delay) * 1s);
+}
+@keyframes directive-scan {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+.directive-icon {
+  color: var(--theme-color);
+  font-size: 1.1rem;
+}
+
+/* 3D ARC REACTOR WRAPPER */
+.center-panel {
+  perspective: 1000px;
+}
+.arc-reactor-wrapper {
+  transition: transform 0.1s ease-out;
+  transform-style: preserve-3d;
+}
+.arc-reactor {
+  transform: translateZ(20px);
+}
+.arc-core {
+  transform: translateZ(40px);
+}
+.ring-outer {
+  transform: translateZ(10px);
+}
+.ring-mid {
+  transform: translateZ(30px);
+}
+
+/* GLITCH TEXT EFFECT */
+.log-entry.sys {
+  animation: log-appear 0.4s cubic-bezier(.25, .46, .45, .94) forwards;
+}
+@keyframes log-appear {
+  0% { opacity: 0; transform: translateX(-10px); clip-path: inset(50% 0 50% 0); }
+  20% { opacity: 0.8; transform: translate(2px, -2px); clip-path: inset(80% 0 5% 0); }
+  40% { opacity: 0.9; transform: translate(-2px, 2px); clip-path: inset(10% 0 80% 0); }
+  60% { opacity: 1; transform: translate(2px, 2px); clip-path: inset(40% 0 40% 0); }
+  100% { opacity: 1; transform: translateX(0); clip-path: inset(0 0 0 0); }
+}

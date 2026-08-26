@@ -9,6 +9,8 @@ class GlobalState:
         self.mic_active = True
         # Keep track of current system protocol
         self.protocol = "normal"
+        # Keep track of the last time a clap was detected
+        self.last_clap_time = 0.0
     
     def register_task(self, name: str, task: asyncio.Task):
         self.active_tasks[name] = task

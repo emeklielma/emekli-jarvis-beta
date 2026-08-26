@@ -20,6 +20,11 @@ import tools.browser_tools
 import tools.vision_tools
 import tools.memory_tools
 import tools.system_diagnostics
+import tools.integration_tools
+import tools.smart_home_tools
+import tools.gui_tools
+import tools.advanced_system_tools
+import tools.productivity_tools
 from core import wake_word
 from core.tray import tray_manager
 
@@ -151,6 +156,38 @@ def vitals_loop():
             print(f"[VITALS ERROR] {e}")
         time.sleep(1)
 
+def anti_laziness_loop():
+    """Background daemon to monitor the active window and warn if slacking."""
+    try:
+        import pygetwindow as gw
+    except ImportError:
+        print("[ANTI-LAZINESS] pygetwindow not installed, skipping.")
+        return
+        
+    lazy_keywords = ["youtube", "discord", "steam", "riot", "game", "twitter", "instagram"]
+    slack_time = 0
+    while True:
+        try:
+            active_win = gw.getActiveWindow()
+            if active_win and active_win.title:
+                title = active_win.title.lower()
+                is_slacking = any(kw in title for kw in lazy_keywords)
+                if is_slacking:
+                    slack_time += 10
+                else:
+                    slack_time = max(0, slack_time - 10)
+                    
+                if slack_time >= 600: # 10 minutes of slacking
+                    if main_loop and main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            process_user_input("Sir, I noticed you have been slacking off on social media or games for a while. Please scold me about productivity."),
+                            main_loop
+                        )
+                    slack_time = 0 # reset after warning
+        except Exception as e:
+            pass
+        time.sleep(10)
+
 @app.on_event("startup")
 async def startup_event():
     global main_loop
@@ -162,10 +199,19 @@ async def startup_event():
     # Start the async TTS worker
     asyncio.create_task(sm.speak_sentence_worker())
     
+    # Define clap handler
+    def on_clap():
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                process_user_input("Please welcome me briefly and enthusiastically."),
+                main_loop
+            )
+
     # Start background threads
     threading.Thread(target=audio_listener_loop, daemon=True).start()
     threading.Thread(target=vitals_loop, daemon=True).start()
-    threading.Thread(target=wake_word.start_wake_word_thread, args=(main_loop, manager.broadcast), daemon=True).start()
+    threading.Thread(target=anti_laziness_loop, daemon=True).start()
+    threading.Thread(target=wake_word.start_wake_word_thread, args=(main_loop, manager.broadcast, on_clap), daemon=True).start()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

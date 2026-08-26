@@ -9,7 +9,7 @@ from core.state import state
 # Pre-download default models if needed
 openwakeword.utils.download_models()
 
-def start_wake_word_thread(main_loop, broadcast_func):
+def start_wake_word_thread(main_loop, broadcast_func, on_clap=None):
     """
     Runs openwakeword using sounddevice in a blocking loop.
     Calls broadcast_func securely using run_coroutine_threadsafe on main_loop.
@@ -31,6 +31,17 @@ def start_wake_word_thread(main_loop, broadcast_func):
                 return
             
             audio_data = indata.flatten().astype(np.int16)
+            
+            # Simple Clap Detection
+            max_amp = np.max(np.abs(audio_data))
+            current_time = time.time()
+            if max_amp > 25000 and (current_time - state.last_clap_time) > 2.0:
+                print(f"[CLAP DETECTED] Amplitude: {max_amp}")
+                state.cancel_all_barge_in_tasks()
+                state.last_clap_time = current_time
+                if on_clap:
+                    on_clap()
+            
             prediction = oww_model.predict(audio_data)
             
             for mdl in oww_model.prediction_buffer.keys():

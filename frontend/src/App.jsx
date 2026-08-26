@@ -32,6 +32,13 @@ function App() {
   const [bootText, setBootText] = useState('')
   const [protocol, setProtocol] = useState('normal')
   const [countdown, setCountdown] = useState(null)
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+
+  const handleMouseMove = useCallback((e) => {
+    const x = (e.clientX / window.innerWidth - 0.5) * 30
+    const y = (e.clientY / window.innerHeight - 0.5) * -30
+    setMousePos({ x, y })
+  }, [])
 
   useEffect(() => {
     if (countdown === null) return;
@@ -230,7 +237,10 @@ function App() {
   }
 
   return (
-    <div className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''} ${protocol === 'decryption' ? 'matrix-mode' : ''}`}>
+    <div 
+      className={`dashboard ${protocol === 'lockdown' ? 'lockdown-mode' : ''} ${protocol === 'party' ? 'party-mode' : ''} ${protocol === 'decryption' ? 'matrix-mode' : ''}`}
+      onMouseMove={handleMouseMove}
+    >
       
       <div className="hud-crosshair top-left"></div>
       <div className="hud-crosshair top-right"></div>
@@ -302,6 +312,28 @@ function App() {
               PROTOCOL<br/>{protocol.toUpperCase()}
             </div>
           </div>
+
+          <div className="env-module">
+            <div className="panel-title">▼ ENVIRONMENT</div>
+            <div className="env-grid">
+              <div className="env-item">
+                <div className="env-value">72°</div>
+                <div className="env-label">TEMP (F)</div>
+              </div>
+              <div className="env-item">
+                <div className="env-value">14.7</div>
+                <div className="env-label">ATM (PSI)</div>
+              </div>
+              <div className="env-item">
+                <div className="env-value">45%</div>
+                <div className="env-label">HUMIDITY</div>
+              </div>
+              <div className="env-item">
+                <div className="env-value">12</div>
+                <div className="env-label">WIND (MPH)</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="panel center-panel hud-box">
@@ -328,21 +360,55 @@ function App() {
               <div className="radar-text">SATELLITE UPLINK ESTABLISHED<br/>SCANNING...</div>
             </div>
           ) : (
-            <div className={`arc-reactor ${status}`}>
-              <div className="arc-core"></div>
-              <div className="arc-ring ring-outer"></div>
-              <div className="arc-ring ring-mid"></div>
-              <div className="arc-ring ring-inner"></div>
-              <div className="arc-ring ring-ultra-inner"></div>
-              
-              <div className="radar-status">
-                <span className="blink">●</span> {status}
+            <div className="arc-reactor-wrapper" style={{ transform: `rotateX(${mousePos.y}deg) rotateY(${mousePos.x}deg)` }}>
+              <div className={`arc-reactor ${status}`}>
+                <div className="arc-core"></div>
+                <div className="arc-ring ring-outer"></div>
+                <div className="arc-ring ring-mid"></div>
+                <div className="arc-ring ring-inner"></div>
+                <div className="arc-ring ring-ultra-inner"></div>
+                
+                <div className="radar-status">
+                  <span className="blink">●</span> {status}
+                </div>
               </div>
+            </div>
+          )}
+
+          {(status === 'LISTENING' || status === 'THINKING') && (
+            <div className="audio-visualizer">
+              <div className="bar bar1"></div>
+              <div className="bar bar2"></div>
+              <div className="bar bar3"></div>
+              <div className="bar bar4"></div>
+              <div className="bar bar5"></div>
+              <div className="bar bar4"></div>
+              <div className="bar bar3"></div>
+              <div className="bar bar2"></div>
+              <div className="bar bar1"></div>
             </div>
           )}
         </div>
 
         <div className="panel right-panel">
+          <div className="directive-module">
+            <div className="panel-title">▼ ACTIVE DIRECTIVES</div>
+            <div className="directive-list">
+              <div className="directive-item" style={{'--delay': 0}}>
+                <span className="directive-icon">⟡</span>
+                <span>MONITORING NETWORK TRAFFIC</span>
+              </div>
+              <div className="directive-item" style={{'--delay': 1}}>
+                <span className="directive-icon">⟡</span>
+                <span>MAINTAINING UPLINK SEC</span>
+              </div>
+              <div className="directive-item" style={{'--delay': 2}}>
+                <span className="directive-icon">⟡</span>
+                <span>AWAITING USER COMMAND</span>
+              </div>
+            </div>
+          </div>
+
           <div className="panel-title">▼ ACTIVITY LOG</div>
           
           <div className="activity-log" ref={chatContainerRef} onScroll={handleScroll}>

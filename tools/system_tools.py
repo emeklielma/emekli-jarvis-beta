@@ -209,6 +209,8 @@ def search_files(query: str, folder: str = None) -> str:
                 break
         if len(matches) >= 50:
             break
+        if len(matches) >= 50:
+            break
 
     if not matches:
         return f"'{query}' için sonuç bulunamadı."
@@ -274,3 +276,14 @@ def _relocate_file(source: str, destination: str, move: bool) -> str:
             return f"'{src_real}' başarıyla '{dst_real}' konumuna kopyalandı."
     except Exception as e:
         return f"Error: {e}"
+
+@register_tool(
+    name="system_shutdown",
+    description="Shuts down the user's computer.",
+)
+def system_shutdown() -> str:
+    try:
+        os.system("shutdown /s /t 5")
+        return "Initiated system shutdown in 5 seconds."
+    except Exception as e:
+        return f"Failed to shutdown system: {e}"

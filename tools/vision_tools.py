@@ -52,3 +52,46 @@ def analyze_screen(question: str) -> str:
         return f"Vision Analysis Result: {response.text}"
     except Exception as e:
         return f"Failed to analyze screen: {e}"
+
+@register_tool(
+    name="capture_webcam",
+    description="Takes a picture using the user's webcam and analyzes it to answer questions about the physical world.",
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "question": {"type": "STRING", "description": "What to look for in the webcam feed (e.g. 'Who is in front of the camera?', 'What am I holding?')."}
+        },
+        "required": ["question"]
+    }
+)
+def capture_webcam(question: str) -> str:
+    try:
+        import cv2
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            return "Failed to open webcam."
+        
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret:
+            return "Failed to capture image from webcam."
+            
+        # Convert to bytes
+        is_success, buffer = cv2.imencode(".jpg", frame)
+        if not is_success:
+            return "Failed to encode image."
+            
+        image_bytes = buffer.tobytes()
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        image_part = {
+            "mime_type": "image/jpeg",
+            "data": image_bytes
+        }
+        
+        response = model.generate_content([image_part, question])
+        return f"Webcam Analysis Result: {response.text}"
+    except Exception as e:
+        return f"Failed to capture webcam: {e}"
+

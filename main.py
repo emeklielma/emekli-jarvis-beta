@@ -1,6 +1,6 @@
 import time
-import speech_module as sm
-import ai_module as am
+from core import speech_module as sm
+from core import ai_module as am
 import tools
 import webbrowser
 import os

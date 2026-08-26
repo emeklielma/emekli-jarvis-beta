@@ -21,8 +21,8 @@ async def speak_sentence_worker():
             if not text.strip():
                 _speech_queue.task_done()
                 continue
-            # English voice
-            voice = 'en-US-ChristopherNeural'
+            # English voice (British male, Jarvis-like)
+            voice = 'en-GB-RyanNeural'
             temp_audio = f"jarvis_response_{int(time.time()*1000)}.mp3"
             
             try:
