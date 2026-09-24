@@ -171,8 +171,11 @@ def main():
             break
         if command.lower() in ("q", "çık", "cik", "exit"):
             break
-        if command.lower().startswith("ara"):
-            print(phone.call_owner(command[3:].strip()), flush=True)
+        lowered = command.lower()
+        if "ara" in lowered.split() or lowered.startswith("ara") or "call" in lowered:
+            print(phone.call_owner(), flush=True)
+        elif command:
+            print("Jarvis'in seni araması için 'ara' yazıp Enter'a bas.", flush=True)
     phone.stop()
 
 

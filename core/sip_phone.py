@@ -322,9 +322,15 @@ def digest_authorization(challenge_response: SipMessage, method: str, uri: str, 
     return name, "Digest " + fields
 
 
-def parse_sdp(body: bytes) -> Optional[Tuple[str, int, List[int]]]:
+ENCRYPTION_HINT = ("Telefondaki Linphone şifreli arama istiyor. Linphone'da Ayarlar > Güvenlik (veya Aramalar) > "
+                   "Medya şifreleme: Yok yapın ve 'Şifreleme zorunlu' seçeneğini kapatın.")
+CODEC_HINT = "Telefondaki Linphone'da Ayarlar > Ses > Kodekler kısmından PCMU ve PCMA'yı açın."
+
+
+def parse_sdp(body: bytes) -> Optional[Tuple[str, int, List[int], str]]:
+    """Returns (ip, port, payload types, profile) of the audio stream."""
     text = body.decode("utf-8", "replace")
-    ip, port, payloads = None, None, []
+    ip, port, payloads, profile = None, None, [], ""
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("c=IN IP4 ") and ip is None:
@@ -332,6 +338,7 @@ def parse_sdp(body: bytes) -> Optional[Tuple[str, int, List[int]]]:
         elif line.startswith("m=audio "):
             fields = line.split()
             port = int(fields[1])
+            profile = fields[2].upper() if len(fields) > 2 else ""
             payloads = [int(p) for p in fields[3:] if p.isdigit()]
             # a media-level c= line overrides the session one
             ip_media = re.search(r"m=audio[^\n]*\n(?:[^m][^\n]*\n)*?c=IN IP4 (\S+)", text)
@@ -339,7 +346,7 @@ def parse_sdp(body: bytes) -> Optional[Tuple[str, int, List[int]]]:
                 ip = ip_media.group(1)
     if ip is None or port is None:
         return None
-    return ip, port, payloads
+    return ip, port, payloads, profile
 
 
 # ---------------------------------------------------------
@@ -479,6 +486,9 @@ class SipCall:
         self.invite_cseq = 0
         self.invite_uri = ""
         self.intro: Optional[str] = None
+        self.reject_hint = ""
+        self.remote_wants_zrtp = False
+        self.started_at = 0.0
         self._utterances: "queue.Queue[np.ndarray]" = queue.Queue()
         # voice activity detection state
         self._noise = 0.005
@@ -511,9 +521,15 @@ class SipCall:
         sdp = parse_sdp(body) if body else None
         if not sdp:
             return False
-        ip, port, payloads = sdp
+        ip, port, payloads, profile = sdp
+        text = body.decode("utf-8", "replace")
+        self.remote_wants_zrtp = "a=zrtp-hash" in text
+        if "SAVP" in profile:                       # SRTP / DTLS only: we only speak plain RTP
+            self.reject_hint = ENCRYPTION_HINT
+            return False
         codec = next((p for p in payloads if p in (0, 8)), None)
         if codec is None:
+            self.reject_hint = CODEC_HINT
             return False
         if ip != "0.0.0.0":
             self.media.set_remote(ip, port, codec)
@@ -543,6 +559,7 @@ class SipCall:
 
     def start_conversation(self):
         self.established = True
+        self.started_at = time.time()
         if self.phone.on_call_start:
             self.phone.on_call_start()
         self.media.on_audio = self._on_audio
@@ -878,7 +895,11 @@ class SipPhone:
         elif method == "BYE":
             self.respond_to(req, addr, 200, "OK")
             if call:
-                self.log("sys", "SYS: 📞 Linphone görüşmesi bitti.")
+                reason = req.get("reason")
+                self.log("sys", "SYS: 📞 Linphone görüşmesi bitti." + (f" ({reason})" if reason else ""))
+                # Phone hung up right away: almost always its "encryption mandatory" setting (ZRTP)
+                if call.started_at and time.time() - call.started_at < 15 and call.remote_wants_zrtp:
+                    self.log("err", f"ERR: 📞 {ENCRYPTION_HINT}")
                 call.hangup(send_bye=False)
         elif method == "CANCEL":
             self.respond_to(req, addr, 200, "OK")
@@ -911,6 +932,7 @@ class SipPhone:
         with self._lock:
             self.calls[call.call_id] = call
         if not call.apply_remote_sdp(req.body):
+            self.log("err", f"ERR: 📞 Gelen arama açılamadı. {call.reject_hint}")
             call.last_response = self.respond_to(req, addr, 488, "Not Acceptable Here", call.local_tag)
             call.hangup(send_bye=False)
             return
@@ -992,7 +1014,8 @@ class SipPhone:
                     auth = digest_authorization(resp, "INVITE", uri, self.user, self.password)
                     continue
                 reasons = {486: "meşgul", 480: "şu an ulaşılamıyor (Linphone kapalı olabilir)",
-                           603: "aramayı reddetti", 487: "açmadı", 404: "Linphone hesabı bulunamadı"}
+                           603: "aramayı reddetti", 487: "açmadı", 404: "Linphone hesabı bulunamadı",
+                           488: f"telefon ses ayarlarını kabul etmedi. {ENCRYPTION_HINT} {CODEC_HINT}"}
                 self.log("err", f"ERR: 📞 Linphone araması başarısız: {reasons.get(resp.status, f'{resp.status} {resp.reason}')}")
                 break
         finally:
