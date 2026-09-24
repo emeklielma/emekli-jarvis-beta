@@ -26,10 +26,9 @@ from urllib.parse import quote, urlsplit
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from core.sip_phone import is_hangup  # noqa: F401  (shared hangup phrases)
 
-HANGUP_WORDS = ("görüşürüz", "hoşça kal", "hoşçakal", "güle güle", "kapat", "kapatabilirsin",
-                "bye", "goodbye", "hang up")
+load_dotenv()
 
 PHONE_INSTRUCTION = (
     "[PHONE CALL MODE] You are talking to your owner over a normal phone call. Your reply will be "
@@ -103,11 +102,6 @@ def is_configured() -> bool:
 def is_owner(number: str) -> bool:
     owner = owner_number()
     return bool(owner) and normalize_number(number) == owner
-
-
-def is_hangup(text: str) -> bool:
-    t = (text or "").lower()
-    return any(word in t for word in HANGUP_WORDS)
 
 
 # ---------------------------------------------------------

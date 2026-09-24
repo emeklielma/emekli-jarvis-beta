@@ -38,8 +38,6 @@ from typing import Callable, List, Optional, Tuple
 import numpy as np
 from dotenv import load_dotenv
 
-from core import telephony
-
 load_dotenv()
 
 USER_AGENT = "Jarvis-SIP/1.0"
@@ -49,6 +47,15 @@ REGISTER_EXPIRES = 300
 KEEPALIVE_SECONDS = 20
 FRAME = 160                # 20 ms @ 8 kHz
 SAMPLE_RATE = 8000
+
+HANGUP_WORDS = ("görüşürüz", "hoşça kal", "hoşçakal", "güle güle", "kapat", "kapatabilirsin",
+                "bye", "goodbye", "hang up")
+
+
+def is_hangup(text: str) -> bool:
+    t = (text or "").lower()
+    return any(word in t for word in HANGUP_WORDS)
+
 
 # Ayarlanmışsa server.py başlatınca buraya koyar (tools/phone_tools.py kullanır)
 instance: Optional["SipPhone"] = None
@@ -164,7 +171,12 @@ def default_stt(pcm: np.ndarray) -> str:
 def default_tts(text: str) -> np.ndarray:
     import edge_tts
     import soundfile as sf
-    from core.speech_module import pick_voice
+    try:
+        from core.speech_module import pick_voice
+    except ImportError:
+        # Bu dosya Jarvis projesinin dışında tek başına kullanıldığında (jarvis_telefon.py)
+        def pick_voice(t: str) -> str:
+            return _env("JARVIS_TTS_VOICE") or "tr-TR-AhmetNeural"
 
     async def synth() -> bytes:
         data = bytearray()
@@ -531,6 +543,8 @@ class SipCall:
 
     def start_conversation(self):
         self.established = True
+        if self.phone.on_call_start:
+            self.phone.on_call_start()
         self.media.on_audio = self._on_audio
         self.media.start()
         self.phone.log("sys", "SYS: 📞 Linphone görüşmesi başladı.")
@@ -593,7 +607,7 @@ class SipCall:
             if not text or self.ended.is_set():
                 continue
             self.phone.log("user", f"📞 USR: {text}")
-            if telephony.is_hangup(text):
+            if is_hangup(text):
                 self.say("Görüşmek üzere efendim.")
                 self.media.wait_playback(10)
                 self.phone.log("sys", "SYS: 📞 Linphone görüşmesi bitti.")
@@ -617,7 +631,8 @@ class SipPhone:
     def __init__(self, user: str, password: str, owner: str, domain: str = "sip.linphone.org",
                  proxy: Optional[str] = None, local_port: int = 5070,
                  respond: Callable[[str], str] = None, log: Callable[[str, str], None] = None,
-                 stt: Callable[[np.ndarray], str] = default_stt, tts: Callable[[str], np.ndarray] = default_tts):
+                 stt: Callable[[np.ndarray], str] = default_stt, tts: Callable[[str], np.ndarray] = default_tts,
+                 on_call_start: Callable[[], None] = None):
         self.user = user
         self.password = password
         self.domain = domain
@@ -633,6 +648,7 @@ class SipPhone:
         self.respond = respond or (lambda text: "")
         self.log = log or (lambda sender, text: print(text))
         self.stt, self.tts = stt, tts
+        self.on_call_start = on_call_start
         self.registered = False
         self.calls = {}
         self._transactions = {}
