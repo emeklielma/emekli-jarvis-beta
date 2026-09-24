@@ -8,6 +8,8 @@ start /min "JARVIS Backend" cmd /k "python server.py"
 
 echo [2/3] Starting Frontend Dev Server (Vite)...
 start /min "JARVIS Frontend" cmd /k "cd frontend && npm run dev"
+rem Telefon icin HTTPS arayuz: https://BILGISAYAR-IP:5174 (ayni Wi-Fi)
+start /min "JARVIS Phone" cmd /k "cd frontend && npm run dev:phone"
 
 echo Waiting 5 seconds for servers to initialize...
 timeout /t 5 /nobreak >nul

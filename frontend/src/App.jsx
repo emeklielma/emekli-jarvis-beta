@@ -1,6 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
 
+// Vite dev sunucusu /ws ve /api isteklerini Python'a iletiyor (vite.config.js);
+// böylece telefondan da sayfanın açıldığı adres üzerinden bağlanılıyor.
+const isViteServed = window.location.protocol.startsWith('http') && window.location.port !== '8000'
+const WS_URL = isViteServed
+  ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
+  : `ws://${window.location.hostname || 'localhost'}:8000/ws`
+const API_BASE = isViteServed ? '' : `http://${window.location.hostname || 'localhost'}:8000`
+
+const BrowserSpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+// Electron/pywebview'da Python mikrofonu kullanılıyor; tarayıcı mikrofonu telefon/tarayıcı içindir
+const isDesktopShell = !!window.pywebview || navigator.userAgent.includes('Electron')
+const canUseDeviceMic = !!BrowserSpeechRecognition && !isDesktopShell
+
 const themes = [
   { name: 'Cyan', color: '#00e5ff', rgb: '0, 229, 255' },
   { name: 'Red', color: '#ff2a2a', rgb: '255, 42, 42' },
@@ -22,6 +35,8 @@ function App() {
   const [netSpeed, setNetSpeed] = useState(13)
   const [isMicActive, setIsMicActive] = useState(true)
   const [wsInstance, setWsInstance] = useState(null)
+  const [isDeviceMicListening, setIsDeviceMicListening] = useState(false)
+  const recognitionRef = useRef(null)
   
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
@@ -48,7 +63,7 @@ function App() {
       setCurrentTheme(themes[0]);
       try {
         if (window.pywebview) window.pywebview.api.minimize();
-        else fetch('http://localhost:8000/api/minimize');
+        else fetch(`${API_BASE}/api/minimize`);
       } catch (err) {}
       return;
     }
@@ -118,16 +133,26 @@ function App() {
     let reconnectInterval;
 
     const connect = () => {
-      ws = new WebSocket('ws://localhost:8000/ws');
-      
+      ws = new WebSocket(WS_URL);
+
       ws.onopen = () => {
-        setMessages(prev => [...prev, { sender: 'sys', text: 'SYS: Python Brain Connected. Microphone active.' }])
+        setMessages(prev => [...prev, { sender: 'sys', text: 'SYS: Python Brain Connected.' }])
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'action' && data.value === 'minimize') {
+        if (data.type === 'history') {
+          // Sunucudaki sohbet geçmişi: telefon ve bilgisayar aynı konuşmayı görür
+          setMessages([
+            { sender: 'sys', text: 'SYS: JARVIS UI online.' },
+            ...data.messages,
+            { sender: 'sys', text: `SYS: Python Brain Connected. Microphone ${data.mic_active ? 'active' : 'muted'}.` },
+          ]);
+          setIsMicActive(data.mic_active);
+        } else if (data.type === 'mic_state') {
+          setIsMicActive(data.value);
+        } else if (data.type === 'action' && data.value === 'minimize') {
           try {
             if (window.pywebview) {
               window.pywebview.api.minimize();
@@ -206,6 +231,35 @@ function App() {
   const interrupt = () => {
     if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
       wsInstance.send(JSON.stringify({ action: "interrupt" }));
+    }
+  }
+
+  const toggleDeviceMic = () => {
+    if (isDeviceMicListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const recognition = new BrowserSpeechRecognition();
+    recognition.lang = 'tr-TR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      if (transcript) sendMessage(transcript);
+    };
+    recognition.onerror = (event) => {
+      const hint = event.error === 'not-allowed' || event.error === 'service-not-allowed'
+        ? 'Mikrofon izni yok. Telefonda sayfayı https:// adresiyle açın (npm run dev:phone) ve mikrofon iznini verin.'
+        : `Mikrofon hatası: ${event.error}`;
+      setMessages(prev => [...prev, { sender: 'err', text: `ERR: ${hint}` }]);
+    };
+    recognition.onend = () => setIsDeviceMicListening(false);
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setIsDeviceMicListening(true);
+    } catch (err) {
+      setMessages(prev => [...prev, { sender: 'err', text: `ERR: Mikrofon başlatılamadı: ${err.message}` }]);
     }
   }
 
@@ -446,8 +500,13 @@ function App() {
           
           <div className="action-buttons">
             <button className="btn btn-red" onClick={interrupt}>✋ INTERRUPT (ESC)</button>
+            {canUseDeviceMic && (
+              <button className={`btn ${isDeviceMicListening ? 'btn-green active' : 'btn-green'}`} onClick={toggleDeviceMic}>
+                {isDeviceMicListening ? '🎙️ DİNLİYORUM... (DURDUR)' : '📱 BU CİHAZIN MİKROFONUYLA KONUŞ'}
+              </button>
+            )}
             <button className={`btn ${isMicActive ? 'btn-green' : 'btn-red'} active`} onClick={toggleMic}>
-              {isMicActive ? '🎤 PYTHON MICROPHONE ACTIVE' : '🔇 MICROPHONE MUTED'}
+              {isMicActive ? '🎤 PC MICROPHONE ACTIVE' : '🔇 PC MICROPHONE MUTED'}
             </button>
           </div>
         </div>

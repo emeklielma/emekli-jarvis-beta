@@ -20,6 +20,6 @@ pygetwindow
 keyboard
 mouse
 fastapi
-uvicorn
+uvicorn[standard]
 requests
 win10toast

@@ -726,3 +726,21 @@ body {
   60% { opacity: 1; transform: translate(2px, 2px); clip-path: inset(40% 0 40% 0); }
   100% { opacity: 1; transform: translateX(0); clip-path: inset(0 0 0 0); }
 }
+
+/* PHONE LAYOUT: panelleri alt alta diz, sayfa kaydırılabilsin */
+@media (max-width: 900px) {
+  body { height: auto; min-height: 100vh; overflow: auto; }
+  #root { padding: 4px; }
+  .dashboard { height: auto; min-height: calc(100vh - 8px); }
+  .top-bar { font-size: 11px; letter-spacing: 1px; padding: 5px 8px; }
+  .top-bar .time, .top-bar .top-right > span { display: none; }
+  .main-content { flex-direction: column; overflow: visible; }
+  .left-panel, .hud-coordinates, .directive-module, .jarvis-subtitle { display: none; }
+  .center-panel { padding: 16px 10px 40px; }
+  .hud-crosshair { display: none; }
+  .arc-reactor-wrapper { zoom: 0.6; }
+  .center-panel .hud-corner { display: none; }
+  .right-panel { width: 100%; padding: 10px; }
+  .activity-log { min-height: 260px; max-height: 45vh; }
+  .input-group input { font-size: 16px; } /* iOS'ta odaklanınca zoom yapmasın */
+}

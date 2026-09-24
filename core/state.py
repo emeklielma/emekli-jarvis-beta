@@ -7,6 +7,8 @@ class GlobalState:
         self.active_tasks: Dict[str, asyncio.Task] = {}
         # Keep track if the microphone is active globally
         self.mic_active = True
+        # True while TTS audio is playing (mic raises its threshold to avoid hearing itself)
+        self.is_speaking = False
         # Keep track of current system protocol
         self.protocol = "normal"
         # Keep track of the last time a clap was detected
