@@ -800,8 +800,13 @@ class SipPhone:
                     self.contact_host, self.contact_port = public
                     return self.register(expires)
                 return True
-            self.last_error = f"Sunucu kaydı reddetti ({resp.status} {resp.reason})."
-            print(f"[SIP] Register failed: {resp.status} {resp.reason}")
+            detail = resp.get("warning") or resp.get("reason")
+            if resp.status == 403 and auth:
+                self.last_error = ("Linphone kullanıcı adını/şifreyi kabul etmedi ya da hesap henüz etkinleştirilmemiş "
+                                   "(e-postadaki onay linkine tıklayın).")
+            else:
+                self.last_error = f"Sunucu kaydı reddetti ({resp.status} {resp.reason})."
+            print(f"[SIP] Register failed: {resp.status} {resp.reason} (auth sent: {bool(auth)}) {detail}")
             return False
         return False
 
