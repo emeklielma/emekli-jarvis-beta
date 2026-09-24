@@ -30,6 +30,7 @@ import tools.productivity_tools
 import tools.claude_tools
 import tools.phone_tools
 from core import telephony
+from core import sip_phone
 from core import intents
 from core import claude_launcher
 from core.tray import tray_manager
@@ -131,7 +132,7 @@ async def process_user_input(text: str):
     # "beni ara" -> sahibin telefonunu ara (sadece kayıtlı numara)
     if intents.match_call_me_intent(text):
         await manager.broadcast({"type": "tool_start", "name": "call_my_phone", "args": {}})
-        result = await asyncio.to_thread(telephony.call_owner)
+        result = await asyncio.to_thread(telephony.call_owner_any)
         await manager.broadcast({"type": "tool_end", "name": "call_my_phone", "success": True})
         await log_message("sys", f"JRV: {result}")
         await sm.enqueue_sentence(result.split(". ")[0])
@@ -308,6 +309,7 @@ async def startup_event():
     # Start background threads
     threading.Thread(target=audio_listener_loop, daemon=True).start()
     threading.Thread(target=telephony.sync_incoming_webhook, daemon=True).start()
+    start_sip_phone()
     threading.Thread(target=vitals_loop, daemon=True).start()
     threading.Thread(target=anti_laziness_loop, daemon=True).start()
     # JARVIS_WAKE_WORD=0: "hey jarvis"/alkış dinleyicisini kapatır (mikrofonu ikinci kez açmaz)
@@ -345,6 +347,29 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"[WS FATAL ERROR] {e}")
         manager.disconnect(websocket)
+
+# ---------------------------------------------------------
+# LINPHONE (SIP) - ücretsiz internet araması
+# ---------------------------------------------------------
+def _sip_log(sender: str, text: str):
+    # SIP threads are not part of the asyncio loop
+    chat_history.append({"sender": sender, "text": text})
+    safe_broadcast({"type": "log", "sender": sender, "text": text})
+
+def _sip_respond(text: str) -> str:
+    future = asyncio.run_coroutine_threadsafe(
+        am.generate_text(text, allow_tools=False, extra_instruction=telephony.PHONE_INSTRUCTION), main_loop)
+    return future.result(timeout=25)
+
+def start_sip_phone():
+    if not sip_phone.is_configured():
+        return
+    try:
+        sip_phone.instance = sip_phone.SipPhone.from_env(respond=_sip_respond, log=_sip_log)
+        sip_phone.instance.start()
+    except Exception as e:
+        print(f"[SIP] Could not start: {e}")
+        _sip_log("err", f"ERR: 📞 Linphone hattı başlatılamadı: {e}")
 
 # ---------------------------------------------------------
 # PHONE (Twilio) - normal telefon araması

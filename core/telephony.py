@@ -223,6 +223,17 @@ def call_owner(reason: str = "") -> str:
         return f"Arama başlatılamadı: {e}"
 
 
+def call_owner_any(reason: str = "") -> str:
+    """Calls the owner over Linphone (free) if configured, otherwise over Twilio."""
+    from core import sip_phone
+    if sip_phone.instance is not None:
+        return sip_phone.instance.call_owner(reason)
+    if is_configured():
+        return call_owner(reason)
+    return ("Telefon araması ayarlı değil. .env dosyasına Linphone bilgilerini "
+            "(JARVIS_SIP_USER, JARVIS_SIP_PASSWORD, JARVIS_SIP_OWNER) ekleyin.")
+
+
 def sync_incoming_webhook():
     """Points the Twilio number's incoming-call webhook at JARVIS_PUBLIC_URL/phone/voice,
     so the ngrok address in .env is all that has to be kept up to date."""
