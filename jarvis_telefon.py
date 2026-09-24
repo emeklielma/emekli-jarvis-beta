@@ -12,6 +12,8 @@ Ses / dil (.env, hepsi isteğe bağlı):
     JARVIS_PHONE_LANG=en-US             -> görüşme dili (varsayılan en-US; Türkçe için tr-TR)
     ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID -> Jarvis'in kendi ElevenLabs sesi (yoksa edge-tts)
     ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+Sesli komut: bilgisayarın mikrofonunda "call me" / "beni ara" duyulunca Jarvis seni arar
+    (JARVIS_PHONE_HOTWORD=0 ile kapatılır).
 Kamera: görüntülü aramada telefonun kamerası Jarvis'e gösterilir (pip install av pillow).
 
 Kullanım:
@@ -21,11 +23,14 @@ Kullanım:
 """
 
 import base64
+import collections
 import json
 import os
+import queue
 import re
 import sys
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -157,6 +162,72 @@ def tts(text: str):
     return sip_phone.default_tts(text)
 
 
+CALL_PHRASES = ("call me", "call my phone", "ring me", "phone me", "beni ara", "telefonumu ara")
+HOTWORD_COOLDOWN = 20
+
+
+def is_call_request(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in CALL_PHRASES)
+
+
+def hotword_loop():
+    """Bilgisayar mikrofonunu dinler; 'call me' / 'beni ara' duyunca sahibini arar."""
+    try:
+        import numpy as np
+        import sounddevice as sd
+        import speech_recognition as sr
+    except Exception as e:
+        print(f"[SESLİ KOMUT] Kapalı ({e}).", flush=True)
+        return
+    rate, block = 16000, 4000                       # 0.25 s parçalar
+    chunks: "queue.Queue" = queue.Queue()
+    recognizer = sr.Recognizer()
+    last_call = 0.0
+
+    def handle(pcm):
+        nonlocal last_call
+        try:
+            text = recognizer.recognize_google(sr.AudioData(pcm.tobytes(), rate, 2), language=PHONE_LANG)
+        except Exception:
+            return
+        if is_call_request(text) and time.time() - last_call > HOTWORD_COOLDOWN and not phone.calls:
+            last_call = time.time()
+            print(f'[SESLİ KOMUT] "{text}" -> {phone.call_owner()}', flush=True)
+
+    while True:
+        try:
+            with sd.InputStream(samplerate=rate, channels=1, dtype="int16", blocksize=block,
+                                callback=lambda data, frames, t, status: chunks.put(data[:, 0].copy())):
+                print('[SESLİ KOMUT] Dinliyorum: "Jarvis, call me" deyince seni ararım.', flush=True)
+                noise, talking, silence, buffer = None, False, 0, []
+                preroll = collections.deque(maxlen=2)
+                while True:
+                    chunk = chunks.get()
+                    if phone.calls:                     # görüşme sırasında dinleme
+                        talking, buffer = False, []
+                        continue
+                    level = float(np.sqrt(np.mean((chunk / 32768.0) ** 2)))
+                    noise = level if noise is None else noise
+                    if level > max(noise * 3.0, 0.01):
+                        if not talking:
+                            talking, buffer = True, list(preroll)
+                        buffer.append(chunk)
+                        silence = 0
+                    elif talking:
+                        buffer.append(chunk)
+                        silence += 1
+                        if silence >= 3 or len(buffer) > 32:   # 0.75 s sessizlik / en fazla 8 s
+                            pcm, talking, buffer = np.concatenate(buffer), False, []
+                            threading.Thread(target=handle, args=(pcm,), daemon=True).start()
+                    else:
+                        noise = 0.95 * noise + 0.05 * level
+                        preroll.append(chunk)
+        except Exception as e:
+            print(f"[SESLİ KOMUT] Mikrofon açılamadı: {e}. 10 sn sonra tekrar denenecek.", flush=True)
+            time.sleep(10)
+
+
 def new_call():
     with history_lock:
         history.clear()
@@ -211,6 +282,9 @@ def main():
     except OSError as e:
         print(f"[UYARI] Kontrol portu {CONTROL_PORT} açılamadı: {e}")
 
+    if os.getenv("JARVIS_PHONE_HOTWORD", "1") != "0":
+        threading.Thread(target=hotword_loop, daemon=True).start()
+
     print("=" * 50)
     print(" JARVIS TELEFON (Linphone)")
     print(f" Jarvis hesabı : {phone.user}@{phone.domain}")
@@ -218,7 +292,7 @@ def main():
     voice = "ElevenLabs" if os.getenv("ELEVENLABS_API_KEY") and os.getenv("ELEVENLABS_VOICE_ID") else os.environ["JARVIS_TTS_VOICE"]
     print(f" Dil / ses    : {PHONE_LANG} / {voice}")
     print(f" Kamera       : {'açık (görüntülü aramada Jarvis görür)' if video else 'kapalı (pip install av pillow)'}")
-    print(" Seni araması için: ara  yazıp Enter'a bas")
+    print(" Seni araması için: \"Jarvis, call me\" de  ya da  ara  yazıp Enter'a bas")
     print(" Çıkmak için      : q")
     print("=" * 50, flush=True)
 
