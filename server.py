@@ -173,6 +173,8 @@ def audio_listener_loop():
                 if main_loop and main_loop.is_running():
                     asyncio.run_coroutine_threadsafe(process_user_input(text), main_loop)
             elif text == "":
+                # Ses geldi ama anlaşılamadı: kullanıcı en azından mikrofonun çalıştığını görsün
+                safe_broadcast({"type": "log", "sender": "sys", "text": "SYS: Sesini duydum ama anlayamadım, tekrar söyler misin?"})
                 safe_broadcast({"type": "status", "value": "ONLINE"})
         except sm.MicrophoneError as e:
             # Eskiden bu hata sessizce yutuluyordu; artık arayüzde görünüyor
@@ -269,7 +271,8 @@ async def startup_event():
     threading.Thread(target=audio_listener_loop, daemon=True).start()
     threading.Thread(target=vitals_loop, daemon=True).start()
     threading.Thread(target=anti_laziness_loop, daemon=True).start()
-    if wake_word is not None:
+    # JARVIS_WAKE_WORD=0: "hey jarvis"/alkış dinleyicisini kapatır (mikrofonu ikinci kez açmaz)
+    if wake_word is not None and os.getenv("JARVIS_WAKE_WORD", "1") != "0":
         threading.Thread(target=wake_word.start_wake_word_thread, args=(main_loop, manager.broadcast, on_clap), daemon=True).start()
 
 @app.websocket("/ws")

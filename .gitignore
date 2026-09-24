@@ -4,6 +4,7 @@ __pycache__/
 *.mp3
 *.wav
 *.pyc
+*.log
 
 # Frontend
 frontend/node_modules/
