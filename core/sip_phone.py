@@ -52,6 +52,15 @@ HANGUP_WORDS = ("görüşürüz", "hoşça kal", "hoşçakal", "güle güle", "k
                 "bye", "goodbye", "hang up")
 
 
+# Görüşmede Jarvis'in kendi söylediği cümleler (SipPhone(lang=...))
+TEXTS = {
+    "tr": {"greeting": "Merhaba efendim, Jarvis dinliyor.", "calling": "Merhaba efendim, Jarvis arıyor.",
+           "goodbye": "Görüşmek üzere efendim.", "no_answer": "Şu an cevap veremedim, tekrar sorar mısınız?"},
+    "en": {"greeting": "Hello sir, Jarvis here.", "calling": "Good day sir, Jarvis calling.",
+           "goodbye": "Goodbye, sir.", "no_answer": "Apologies sir, I couldn't get an answer. Could you say that again?"},
+}
+
+
 def is_hangup(text: str) -> bool:
     t = (text or "").lower()
     return any(word in t for word in HANGUP_WORDS)
@@ -327,26 +336,43 @@ ENCRYPTION_HINT = ("Telefondaki Linphone şifreli arama istiyor. Linphone'da Aya
 CODEC_HINT = "Telefondaki Linphone'da Ayarlar > Ses > Kodekler kısmından PCMU ve PCMA'yı açın."
 
 
+def sdp_media_sections(body: bytes) -> List[dict]:
+    """Splits an SDP body into its m= sections (kind, port, proto, formats, ip, attributes)."""
+    session_ip, sections, current = None, [], None
+    for line in body.decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if line.startswith("m="):
+            fields = line[2:].split()
+            current = {"kind": fields[0], "port": int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0,
+                       "proto": fields[2].upper() if len(fields) > 2 else "RTP/AVP",
+                       "formats": fields[3:], "ip": None, "attrs": []}
+            sections.append(current)
+        elif line.startswith("c=IN IP4 "):
+            if current is None:
+                session_ip = line.split()[-1]
+            else:
+                current["ip"] = line.split()[-1]
+        elif line.startswith("a=") and current is not None:
+            current["attrs"].append(line[2:])
+    for section in sections:
+        section["ip"] = section["ip"] or session_ip
+    return sections
+
+
+def rtpmap_pt(section: dict, codec: str) -> Optional[int]:
+    for attr in section["attrs"]:
+        m = re.match(r"rtpmap:(\d+)\s+([\w-]+)/", attr)
+        if m and m.group(2).upper() == codec.upper() and m.group(1) in section["formats"]:
+            return int(m.group(1))
+    return None
+
+
 def parse_sdp(body: bytes) -> Optional[Tuple[str, int, List[int], str]]:
     """Returns (ip, port, payload types, profile) of the audio stream."""
-    text = body.decode("utf-8", "replace")
-    ip, port, payloads, profile = None, None, [], ""
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("c=IN IP4 ") and ip is None:
-            ip = line.split()[-1]
-        elif line.startswith("m=audio "):
-            fields = line.split()
-            port = int(fields[1])
-            profile = fields[2].upper() if len(fields) > 2 else ""
-            payloads = [int(p) for p in fields[3:] if p.isdigit()]
-            # a media-level c= line overrides the session one
-            ip_media = re.search(r"m=audio[^\n]*\n(?:[^m][^\n]*\n)*?c=IN IP4 (\S+)", text)
-            if ip_media:
-                ip = ip_media.group(1)
-    if ip is None or port is None:
+    audio = next((m for m in sdp_media_sections(body) if m["kind"] == "audio"), None)
+    if not audio or not audio["ip"]:
         return None
-    return ip, port, payloads, profile
+    return audio["ip"], audio["port"], [int(p) for p in audio["formats"] if p.isdigit()], audio["proto"]
 
 
 # ---------------------------------------------------------
@@ -461,6 +487,154 @@ class RtpSession:
 
 
 # ---------------------------------------------------------
+# VIDEO (telefon kamerası -> Jarvis görsün), sadece alma yönü, VP8
+# ---------------------------------------------------------
+
+def video_available() -> bool:
+    try:
+        import av  # noqa: F401
+        from PIL import Image  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def vp8_depacketize(payload: bytes) -> Tuple[bool, bytes]:
+    """RFC 7741 payload descriptor -> (starts a new frame, VP8 data)."""
+    if not payload:
+        return False, b""
+    first = payload[0]
+    start = bool(first & 0x10) and (first & 0x07) == 0
+    offset = 1
+    if first & 0x80 and len(payload) > 1:              # X: extension byte
+        ext = payload[1]
+        offset = 2
+        if ext & 0x80 and len(payload) > offset:       # I: picture id (7 or 15 bit)
+            offset += 2 if payload[offset] & 0x80 else 1
+        if ext & 0x40:                                 # L: TL0PICIDX
+            offset += 1
+        if ext & 0x30:                                 # T/K: TID/KEYIDX
+            offset += 1
+    return start, payload[offset:]
+
+
+class VideoReceiver:
+    FRESH_SECONDS = 5
+
+    def __init__(self, bind_ip: str = "0.0.0.0"):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        for _ in range(50):
+            try:
+                self.sock.bind((bind_ip, random.randrange(30000, 40000, 2)))
+                break
+            except OSError:
+                continue
+        else:
+            raise OSError("No free video port")
+        self.port = self.sock.getsockname()[1]
+        self.sock.settimeout(0.5)
+        self.pt: Optional[int] = None
+        self.remote: Optional[Tuple[str, int]] = None
+        self.rtcp_mux = False
+        self.ssrc = random.randrange(2 ** 32)
+        self.remote_ssrc: Optional[int] = None
+        self.running = False
+        self._decoder = None
+        self._parts: List[bytes] = []
+        self._have_key = False
+        self._latest = None
+        self._latest_time = 0.0
+        self._lock = threading.Lock()
+
+    def configure(self, ip: str, port: int, pt: int, rtcp_mux: bool):
+        self.remote, self.pt, self.rtcp_mux = (ip, port), pt, rtcp_mux
+
+    def start(self):
+        if self.running or self.pt is None:
+            return
+        import av
+        self._decoder = av.CodecContext.create("vp8", "r")
+        self.running = True
+        threading.Thread(target=self._recv_loop, daemon=True).start()
+        threading.Thread(target=self._keyframe_loop, daemon=True).start()
+
+    def stop(self):
+        self.running = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def request_keyframe(self):
+        """RTCP PLI (RFC 4585) so the phone sends a full picture."""
+        if not self.remote or self.remote_ssrc is None:
+            return
+        target = self.remote if self.rtcp_mux else (self.remote[0], self.remote[1] + 1)
+        try:
+            self.sock.sendto(struct.pack("!BBHII", 0x81, 206, 2, self.ssrc, self.remote_ssrc), target)
+        except OSError:
+            pass
+
+    def _keyframe_loop(self):
+        while self.running:
+            time.sleep(1.0)
+            if not self._have_key or time.time() - self._latest_time > 3:
+                self.request_keyframe()
+
+    def _recv_loop(self):
+        latched = False
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if len(data) < 12 or data[0] >> 6 != 2 or (data[1] & 0x7F) != self.pt:
+                continue
+            if not latched:
+                self.remote, latched = addr, True
+            self.remote_ssrc = struct.unpack("!I", data[8:12])[0]
+            offset = 12 + 4 * (data[0] & 0x0F)
+            if data[0] & 0x10 and len(data) >= offset + 4:
+                offset += 4 + 4 * struct.unpack("!H", data[offset + 2:offset + 4])[0]
+            start, chunk = vp8_depacketize(data[offset:])
+            if start:
+                self._parts = []
+            self._parts.append(chunk)
+            if data[1] & 0x80:                          # marker: last packet of the frame
+                frame, self._parts = b"".join(self._parts), []
+                self._decode(frame)
+
+    def _decode(self, frame: bytes):
+        if not frame:
+            return
+        is_key = not (frame[0] & 0x01)
+        if not self._have_key and not is_key:
+            return
+        import av
+        try:
+            for decoded in self._decoder.decode(av.Packet(frame)):
+                with self._lock:
+                    self._latest, self._latest_time = decoded, time.time()
+                self._have_key = True
+        except Exception:
+            self._have_key = False                      # broken frame: wait for the next keyframe
+
+    def latest_jpeg(self, max_width: int = 768) -> Optional[bytes]:
+        with self._lock:
+            frame, when = self._latest, self._latest_time
+        if frame is None or time.time() - when > self.FRESH_SECONDS:
+            return None
+        image = frame.to_image()
+        if image.width > max_width:
+            image = image.resize((max_width, int(image.height * max_width / image.width)))
+        out = io.BytesIO()
+        image.convert("RGB").save(out, format="JPEG", quality=70)
+        return out.getvalue()
+
+
+# ---------------------------------------------------------
 # CALL
 # ---------------------------------------------------------
 
@@ -476,6 +650,7 @@ class SipCall:
         self.route_set: List[str] = []
         self.cseq = random.randint(1, 1000)
         self.media = RtpSession()
+        self.video: Optional[VideoReceiver] = VideoReceiver() if phone.video_enabled else None
         self.established = False
         self.ended = threading.Event()
         self.acked = threading.Event()
@@ -499,23 +674,50 @@ class SipCall:
         self._preroll = collections.deque(maxlen=10)
 
     # --- SDP -------------------------------------------------------------
-    def local_sdp(self) -> bytes:
+    def _audio_mline(self) -> str:
+        return (f"m=audio {self.media.port} RTP/AVP 0 8 101\r\n"
+                "a=rtpmap:0 PCMU/8000\r\n"
+                "a=rtpmap:8 PCMA/8000\r\n"
+                "a=rtpmap:101 telephone-event/8000\r\n"
+                "a=fmtp:101 0-15\r\n"
+                "a=ptime:20\r\n"
+                "a=sendrecv\r\n")
+
+    def _video_mline(self, pt: int, rtcp_mux: bool) -> str:
+        return (f"m=video {self.video.port} RTP/AVP {pt}\r\n"
+                f"a=rtpmap:{pt} VP8/90000\r\n"
+                f"a=rtcp-fb:{pt} nack pli\r\n"
+                f"a=rtcp-fb:{pt} ccm fir\r\n"
+                + ("a=rtcp-mux\r\n" if rtcp_mux else "")
+                + "a=recvonly\r\n")
+
+    def local_sdp(self, offer: bytes = None) -> bytes:
+        """Our offer, or (with `offer`) an answer with the same m= lines in the same order (RFC 3264)."""
         ip = self.phone.local_ip
         sess = str(random.randint(10 ** 8, 10 ** 9))
-        return (
-            "v=0\r\n"
-            f"o=jarvis {sess} {sess} IN IP4 {ip}\r\n"
-            "s=Jarvis\r\n"
-            f"c=IN IP4 {ip}\r\n"
-            "t=0 0\r\n"
-            f"m=audio {self.media.port} RTP/AVP 0 8 101\r\n"
-            "a=rtpmap:0 PCMU/8000\r\n"
-            "a=rtpmap:8 PCMA/8000\r\n"
-            "a=rtpmap:101 telephone-event/8000\r\n"
-            "a=fmtp:101 0-15\r\n"
-            "a=ptime:20\r\n"
-            "a=sendrecv\r\n"
-        ).encode()
+        sdp = ("v=0\r\n"
+               f"o=jarvis {sess} {sess} IN IP4 {ip}\r\n"
+               "s=Jarvis\r\n"
+               f"c=IN IP4 {ip}\r\n"
+               "t=0 0\r\n")
+        if offer is None:
+            sdp += self._audio_mline()
+            if self.video:
+                sdp += self._video_mline(96, rtcp_mux=True)
+            return sdp.encode()
+        audio_done = False
+        for section in sdp_media_sections(offer):
+            first_fmt = section["formats"][0] if section["formats"] else "0"
+            vp8 = rtpmap_pt(section, "VP8")
+            if section["kind"] == "audio" and not audio_done:
+                sdp += self._audio_mline()
+                audio_done = True
+            elif (section["kind"] == "video" and self.video and vp8 is not None and section["port"]
+                  and "SAVP" not in section["proto"]):
+                sdp += self._video_mline(vp8, rtcp_mux="rtcp-mux" in section["attrs"])
+            else:
+                sdp += f"m={section['kind']} 0 {section['proto']} {first_fmt}\r\n"   # declined
+        return sdp.encode()
 
     def apply_remote_sdp(self, body: bytes) -> bool:
         sdp = parse_sdp(body) if body else None
@@ -533,6 +735,15 @@ class SipCall:
             return False
         if ip != "0.0.0.0":
             self.media.set_remote(ip, port, codec)
+        if self.video:
+            for section in sdp_media_sections(body):
+                vp8 = rtpmap_pt(section, "VP8")
+                if (section["kind"] == "video" and section["port"] and vp8 is not None and section["ip"]
+                        and "SAVP" not in section["proto"]):
+                    self.video.configure(section["ip"], section["port"], vp8, "rtcp-mux" in section["attrs"])
+                    if self.established:
+                        self.video.start()
+                    break
         return True
 
     # --- dialog requests ---------------------------------------------------
@@ -555,6 +766,8 @@ class SipCall:
         if send_bye and self.established:
             threading.Thread(target=self.dialog_request, args=("BYE",), daemon=True).start()
         self.media.stop()
+        if self.video:
+            self.video.stop()
         self.phone.call_finished(self)
 
     def start_conversation(self):
@@ -564,6 +777,8 @@ class SipCall:
             self.phone.on_call_start()
         self.media.on_audio = self._on_audio
         self.media.start()
+        if self.video:
+            self.video.start()
         self.phone.log("sys", "SYS: 📞 Linphone görüşmesi başladı.")
         threading.Thread(target=self._conversation_loop, daemon=True).start()
 
@@ -614,7 +829,8 @@ class SipCall:
         self._buffer = []
 
     def _conversation_loop(self):
-        self.say(self.intro or "Merhaba efendim, Jarvis dinliyor.")
+        texts = self.phone.texts
+        self.say(self.intro or texts["greeting"])
         while not self.ended.is_set():
             try:
                 pcm = self._utterances.get(timeout=0.5)
@@ -625,17 +841,21 @@ class SipCall:
                 continue
             self.phone.log("user", f"📞 USR: {text}")
             if is_hangup(text):
-                self.say("Görüşmek üzere efendim.")
+                self.say(texts["goodbye"])
                 self.media.wait_playback(10)
                 self.phone.log("sys", "SYS: 📞 Linphone görüşmesi bitti.")
                 self.hangup()
                 return
             try:
-                answer = self.phone.respond(text) or ""
+                if self.video:
+                    # Telefonun kamerasından son kare (varsa) Jarvis'e gösterilir
+                    answer = self.phone.respond(text, self.video.latest_jpeg()) or ""
+                else:
+                    answer = self.phone.respond(text) or ""
             except Exception as e:
                 print(f"[SIP] AI error: {e}")
                 answer = ""
-            answer = answer.strip() or "Şu an cevap veremedim, tekrar sorar mısınız?"
+            answer = answer.strip() or texts["no_answer"]
             self.phone.log("sys", f"📞 JRV: {answer}")
             self.say(answer)
 
@@ -649,7 +869,7 @@ class SipPhone:
                  proxy: Optional[str] = None, local_port: int = 5070,
                  respond: Callable[[str], str] = None, log: Callable[[str, str], None] = None,
                  stt: Callable[[np.ndarray], str] = default_stt, tts: Callable[[str], np.ndarray] = default_tts,
-                 on_call_start: Callable[[], None] = None):
+                 on_call_start: Callable[[], None] = None, lang: str = "tr", video: bool = False):
         self.user = user
         self.password = password
         self.domain = domain
@@ -666,6 +886,9 @@ class SipPhone:
         self.log = log or (lambda sender, text: print(text))
         self.stt, self.tts = stt, tts
         self.on_call_start = on_call_start
+        self.texts = TEXTS.get(lang[:2].lower(), TEXTS["tr"])
+        # respond(text, jpeg_or_None) is used when video is on
+        self.video_enabled = video and video_available()
         self.registered = False
         self.calls = {}
         self._transactions = {}
@@ -883,7 +1106,7 @@ class SipPhone:
         if method == "INVITE":
             if call and tag_of(req.get("to")):          # re-INVITE inside the call
                 call.apply_remote_sdp(req.body)
-                self.respond_to(req, addr, 200, "OK", call.local_tag, body=call.local_sdp(), record_route=True,
+                self.respond_to(req, addr, 200, "OK", call.local_tag, body=call.local_sdp(req.body), record_route=True,
                                 extra=[("Contact", self.contact()), ("Content-Type", "application/sdp")])
             elif call and call.last_response:           # retransmitted initial INVITE
                 self.send(call.last_response, addr)
@@ -945,7 +1168,7 @@ class SipPhone:
         time.sleep(0.5)
         if call.ended.is_set():
             return
-        ok = self.respond_to(req, addr, 200, "OK", call.local_tag, body=call.local_sdp(), record_route=True,
+        ok = self.respond_to(req, addr, 200, "OK", call.local_tag, body=call.local_sdp(req.body), record_route=True,
                              extra=[("Contact", self.contact()), ("Content-Type", "application/sdp"),
                                     ("Allow", "INVITE, ACK, CANCEL, BYE, OPTIONS, INFO, UPDATE")])
         call.last_response = ok
@@ -962,7 +1185,7 @@ class SipPhone:
             return "Linphone hattı henüz bağlı değil. İnternet bağlantısını ve Linphone bilgilerini kontrol edin."
         if self.calls:
             return "Zaten bir görüşme var."
-        intro = "Merhaba efendim, Jarvis arıyor."
+        intro = self.texts["calling"]
         if reason:
             intro += " " + reason.strip()
         call = SipCall(self, _rand(24), incoming=False)

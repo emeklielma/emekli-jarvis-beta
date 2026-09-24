@@ -8,12 +8,19 @@ Gerekenler (aynı klasörde):
     .env                -> JARVIS_SIP_USER, JARVIS_SIP_PASSWORD, JARVIS_SIP_OWNER
                            ve GEMINI_API_KEY (yoksa OLLAMA_MODEL ile yerel model)
 
+Ses / dil (.env, hepsi isteğe bağlı):
+    JARVIS_PHONE_LANG=en-US             -> görüşme dili (varsayılan en-US; Türkçe için tr-TR)
+    ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID -> Jarvis'in kendi ElevenLabs sesi (yoksa edge-tts)
+    ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+Kamera: görüntülü aramada telefonun kamerası Jarvis'e gösterilir (pip install av pillow).
+
 Kullanım:
     python jarvis_telefon.py            -> hattı açar; Linphone'dan Jarvis'i arayabilirsin
     Pencerede "ara" yazıp Enter         -> Jarvis seni arar
     http://127.0.0.1:8431/call (POST)   -> başka programlar (ör. Jarvis) aramayı başlatabilir
 """
 
+import base64
 import json
 import os
 import re
@@ -36,12 +43,26 @@ except ImportError:
 
 CONTROL_PORT = int(os.getenv("JARVIS_PHONE_CONTROL_PORT", "8431"))
 MAX_TURNS = 10
+PHONE_LANG = os.getenv("JARVIS_PHONE_LANG", "en-US").strip()
+ENGLISH = PHONE_LANG.lower().startswith("en")
+# sip_phone.default_stt / default_tts read these
+os.environ["JARVIS_STT_LANG"] = PHONE_LANG
+if not os.getenv("JARVIS_TTS_VOICE"):
+    os.environ["JARVIS_TTS_VOICE"] = "en-GB-RyanNeural" if ENGLISH else "tr-TR-AhmetNeural"
 
-SYSTEM_PROMPT = (
-    "Sen J.A.R.V.I.S.'sin; sahibinle normal bir telefon görüşmesi yapıyorsun. Cevabın sesli okunacak: "
-    "1-3 kısa cümle, madde işareti yok, emoji yok, link yok. Kullanıcı hangi dilde konuşursa o dilde cevap ver. "
-    "Sahibine 'efendim' diye hitap et."
-)
+if ENGLISH:
+    SYSTEM_PROMPT = (
+        "You are J.A.R.V.I.S., Tony Stark's loyal, witty British AI butler, on a normal phone call with your owner. "
+        "Your reply is read aloud: 1-3 short sentences, no lists, no emojis, no links. Address him as 'sir'. "
+        "If a picture from his phone camera is attached, that is what you can see right now; use it when he asks "
+        "what you see or when it is relevant."
+    )
+else:
+    SYSTEM_PROMPT = (
+        "Sen J.A.R.V.I.S.'sin; sahibinle normal bir telefon görüşmesi yapıyorsun. Cevabın sesli okunacak: "
+        "1-3 kısa cümle, madde işareti yok, emoji yok, link yok. Sahibine 'efendim' diye hitap et. "
+        "Telefon kamerasından bir görüntü ekliyse şu an gördüğün odur; sorulduğunda ya da ilgiliyse kullan."
+    )
 
 history = []
 history_lock = threading.Lock()
@@ -77,12 +98,21 @@ def ask_ollama(messages: list) -> str:
     return data["message"]["content"]
 
 
-def ask_ai(messages: list) -> str:
+def _with_image(messages: list, image: bytes) -> list:
+    """Attaches the camera frame to the last user message (OpenAI-style content parts)."""
+    url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
+    last = messages[-1]
+    return messages[:-1] + [{"role": "user", "content": [{"type": "text", "text": last["content"]},
+                                                         {"type": "image_url", "image_url": {"url": url}}]}]
+
+
+def ask_ai(messages: list, image: bytes = None) -> str:
     provider = os.getenv("LLM_PROVIDER", "auto").strip().lower()
     order = {"gemini": [ask_gemini], "ollama": [ask_ollama]}.get(provider, [ask_gemini, ask_ollama])
     for backend in order:
         try:
-            text = backend(messages)
+            # Yerel Ollama modeli (qwen3) görüntü görmez; görüntü sadece Gemini'ye gider
+            text = backend(_with_image(messages, image) if image and backend is ask_gemini else messages)
             text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)  # qwen3 düşünce etiketleri
             text = re.sub(r"[*_#`]", "", text).strip()
             if text:
@@ -92,16 +122,39 @@ def ask_ai(messages: list) -> str:
     return ""
 
 
-def respond(text: str) -> str:
+def respond(text: str, image: bytes = None) -> str:
     with history_lock:
         history.append({"role": "user", "content": text})
         del history[:-MAX_TURNS * 2]
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
-    answer = ask_ai(messages)
+    if image:
+        print("[KAMERA] Görüntü Jarvis'e gönderildi.", flush=True)
+    answer = ask_ai(messages, image)
     if answer:
         with history_lock:
             history.append({"role": "assistant", "content": answer})
     return answer
+
+
+def elevenlabs_tts(text: str):
+    """Jarvis'in kendi ElevenLabs sesi, doğrudan telefon formatında (8 kHz u-law)."""
+    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    voice = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+    req = urllib.request.Request(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=ulaw_8000",
+        data=json.dumps({"text": text, "model_id": os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")}).encode(),
+        headers={"xi-api-key": key, "Content-Type": "application/json", "Accept": "audio/basic"}, method="POST")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return sip_phone.g711_decode(resp.read(), 0)
+
+
+def tts(text: str):
+    if os.getenv("ELEVENLABS_API_KEY") and os.getenv("ELEVENLABS_VOICE_ID"):
+        try:
+            return elevenlabs_tts(text)
+        except Exception as e:
+            print(f"[SES] ElevenLabs başarısız, yedek sese geçiliyor: {e}", flush=True)
+    return sip_phone.default_tts(text)
 
 
 def new_call():
@@ -147,7 +200,9 @@ def main():
     if not os.getenv("GEMINI_API_KEY") and not os.getenv("OLLAMA_MODEL"):
         print("[UYARI] .env'de GEMINI_API_KEY veya OLLAMA_MODEL yok; Jarvis telefonda cevap veremez.")
 
-    phone = sip_phone.SipPhone.from_env(respond=respond, log=log, on_call_start=new_call)
+    video = sip_phone.video_available()
+    phone = sip_phone.SipPhone.from_env(respond=respond, log=log, on_call_start=new_call, tts=tts,
+                                        lang=PHONE_LANG, video=video)
     phone.start()
     try:
         # Sadece bu bilgisayardan erişilebilir
@@ -160,6 +215,9 @@ def main():
     print(" JARVIS TELEFON (Linphone)")
     print(f" Jarvis hesabı : {phone.user}@{phone.domain}")
     print(f" Sadece arayan/aranan : {phone.owner}")
+    voice = "ElevenLabs" if os.getenv("ELEVENLABS_API_KEY") and os.getenv("ELEVENLABS_VOICE_ID") else os.environ["JARVIS_TTS_VOICE"]
+    print(f" Dil / ses    : {PHONE_LANG} / {voice}")
+    print(f" Kamera       : {'açık (görüntülü aramada Jarvis görür)' if video else 'kapalı (pip install av pillow)'}")
     print(" Seni araması için: ara  yazıp Enter'a bas")
     print(" Çıkmak için      : q")
     print("=" * 50, flush=True)
