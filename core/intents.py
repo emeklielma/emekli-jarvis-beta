@@ -69,3 +69,17 @@ def match_claude_intent(text: str) -> Optional[Dict[str, Optional[str]]]:
         if m:
             return {"mode": "new", "project_name": _project_name(m.groupdict().get("name"))}
     return None
+
+
+_CALL_ME_PATTERNS = [
+    # "beni ara", "telefonumu ara", "beni telefondan arar mısın"
+    re.compile(_PREFIX + r"(?:beni|telefonumu|numaram[ıi])\s+(?:telefondan\s+|şimdi\s+|hemen\s+)?ara(?:r\s*m[ıi]s[ıi]n|y[ıi]n|\b)"),
+    re.compile(_PREFIX + r"(?:please\s+)?call\s+(?:me|my\s+phone)\b"),
+]
+
+
+def match_call_me_intent(text: str) -> bool:
+    if not text:
+        return False
+    t = _clean(text)
+    return any(p.search(t) for p in _CALL_ME_PATTERNS)

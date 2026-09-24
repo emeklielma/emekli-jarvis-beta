@@ -23,3 +23,5 @@ fastapi
 uvicorn[standard]
 requests
 win10toast
+twilio
+python-multipart

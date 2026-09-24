@@ -6,7 +6,8 @@ import time
 import json
 import psutil
 from collections import deque
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -27,6 +28,8 @@ import tools.gui_tools
 import tools.advanced_system_tools
 import tools.productivity_tools
 import tools.claude_tools
+import tools.phone_tools
+from core import telephony
 from core import intents
 from core import claude_launcher
 from core.tray import tray_manager
@@ -39,6 +42,31 @@ except Exception as e:
     wake_word = None
 
 app = FastAPI()
+
+
+class PublicTunnelGuard:
+    """Twilio'nun ulaşabilmesi için sunucu ngrok ile internete açılıyor. O adresten gelen
+    isteklerde SADECE /phone/ yollarına izin ver; /ws ve /api bilgisayarda komut
+    çalıştırabildiği için internete kapalı kalmalı."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            host = telephony.public_host()
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1").lower() for k, v in scope.get("headers", [])}
+            via_tunnel = bool(host) and host in (headers.get("host", ""), headers.get("x-forwarded-host", ""))
+            if via_tunnel and not scope["path"].startswith("/phone/"):
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                else:
+                    await Response("Forbidden", status_code=403)(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(PublicTunnelGuard)
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,6 +126,16 @@ async def process_user_input(text: str):
     claude_intent = intents.match_claude_intent(text)
     if claude_intent:
         await run_claude_intent(claude_intent)
+        return
+
+    # "beni ara" -> sahibin telefonunu ara (sadece kayıtlı numara)
+    if intents.match_call_me_intent(text):
+        await manager.broadcast({"type": "tool_start", "name": "call_my_phone", "args": {}})
+        result = await asyncio.to_thread(telephony.call_owner)
+        await manager.broadcast({"type": "tool_end", "name": "call_my_phone", "success": True})
+        await log_message("sys", f"JRV: {result}")
+        await sm.enqueue_sentence(result.split(". ")[0])
+        await manager.broadcast({"type": "status", "value": "ONLINE"})
         return
 
     buffer = sm.SentenceBuffer()
@@ -269,6 +307,7 @@ async def startup_event():
 
     # Start background threads
     threading.Thread(target=audio_listener_loop, daemon=True).start()
+    threading.Thread(target=telephony.sync_incoming_webhook, daemon=True).start()
     threading.Thread(target=vitals_loop, daemon=True).start()
     threading.Thread(target=anti_laziness_loop, daemon=True).start()
     # JARVIS_WAKE_WORD=0: "hey jarvis"/alkış dinleyicisini kapatır (mikrofonu ikinci kez açmaz)
@@ -306,6 +345,90 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"[WS FATAL ERROR] {e}")
         manager.disconnect(websocket)
+
+# ---------------------------------------------------------
+# PHONE (Twilio) - normal telefon araması
+# ---------------------------------------------------------
+# PIN doğrulanmış aramalar (CallSid) ve PIN'den sonra söylenecek arama sebepleri
+verified_calls = set()
+pending_intros = {}
+
+def _twiml_response(xml: str) -> Response:
+    return Response(content=xml, media_type="application/xml")
+
+async def _twilio_params(request: Request):
+    """Returns the form params if the request is a genuine Twilio request from/to the owner, else None."""
+    params = dict(await request.form())
+    path_and_query = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not telephony.validate_twilio_request(path_and_query, params, request.headers.get("X-Twilio-Signature")):
+        print(f"[PHONE] Rejected request with invalid Twilio signature: {path_and_query}")
+        return None
+    if not telephony.is_owner(telephony.caller_of(params)):
+        print(f"[PHONE] Rejected call from/to a number that is not the owner: {telephony.caller_of(params)}")
+        return None
+    return params
+
+def _call_allowed(params: dict) -> bool:
+    return not telephony.pin() or params.get("CallSid") in verified_calls
+
+@app.post("/phone/voice")
+async def phone_voice(request: Request):
+    params = await _twilio_params(request)
+    if params is None:
+        return _twiml_response(telephony.reject())
+    intro = request.query_params.get("intro")
+    await log_message("sys", "SYS: 📞 Telefon görüşmesi başladı.")
+    if telephony.pin():
+        # Outbound intro PIN'den sonra söylenir
+        if intro:
+            pending_intros[params.get("CallSid", "")] = intro
+        return _twiml_response(telephony.ask_pin())
+    return _twiml_response(telephony.greet(intro))
+
+@app.post("/phone/pin")
+async def phone_pin(request: Request):
+    params = await _twilio_params(request)
+    if params is None:
+        return _twiml_response(telephony.hangup())
+    call_sid = params.get("CallSid", "")
+    if params.get("Digits", "") == telephony.pin():
+        verified_calls.add(call_sid)
+        return _twiml_response(telephony.greet(pending_intros.pop(call_sid, None)))
+    await log_message("err", "ERR: 📞 Telefonda yanlış PIN girildi, arama kapatıldı.")
+    return _twiml_response(telephony.say_and_hangup("PIN hatalı. Görüşmek üzere."))
+
+@app.post("/phone/listen")
+async def phone_listen(request: Request):
+    params = await _twilio_params(request)
+    if params is None or not _call_allowed(params):
+        return _twiml_response(telephony.hangup())
+    return _twiml_response(telephony.listen_again())
+
+@app.post("/phone/speech")
+async def phone_speech(request: Request):
+    params = await _twilio_params(request)
+    if params is None or not _call_allowed(params):
+        return _twiml_response(telephony.hangup())
+    text = (params.get("SpeechResult") or "").strip()
+    if not text:
+        return _twiml_response(telephony.listen_again("Sizi duyamadım, tekrar söyler misiniz?"))
+    await log_message("user", f"📞 USR: {text}")
+    if telephony.is_hangup(text):
+        verified_calls.discard(params.get("CallSid"))
+        await log_message("sys", "SYS: 📞 Telefon görüşmesi bitti.")
+        return _twiml_response(telephony.say_and_hangup("Görüşmek üzere efendim."))
+    try:
+        # Twilio yaklaşık 15 sn cevap bekliyor
+        answer = await asyncio.wait_for(
+            am.generate_text(text, allow_tools=telephony.tools_allowed(), extra_instruction=telephony.PHONE_INSTRUCTION),
+            timeout=12,
+        )
+    except asyncio.TimeoutError:
+        answer = ""
+    if not answer:
+        answer = "Şu an cevap veremedim, tekrar sorar mısınız?"
+    await log_message("sys", f"📞 JRV: {answer}")
+    return _twiml_response(telephony.reply(answer))
 
 @app.get("/api/minimize")
 async def minimize_ui():

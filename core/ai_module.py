@@ -67,10 +67,11 @@ def manage_history(new_message: Dict[str, Any]):
     if len(conversation_history) > MAX_HISTORY:
         conversation_history = conversation_history[-MAX_HISTORY:]
 
-async def generate_response_stream(prompt: str) -> AsyncGenerator[Dict[str, Any], None]:
+async def generate_response_stream(prompt: str, allow_tools: bool = True, extra_instruction: str = None) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Yields chunks of text or tool execution events.
     Format: {"type": "token", "content": "..."} or {"type": "tool_call", "name": "...", "args": ...}
+    allow_tools=False sends no tool schema (used for phone calls); extra_instruction is appended to the system prompt.
     """
     global current_model_idx
     
@@ -86,17 +87,21 @@ async def generate_response_stream(prompt: str) -> AsyncGenerator[Dict[str, Any]
         "Authorization": f"Bearer {API_KEY}"
     }
     
-    sys_msg = {"role": "system", "content": get_system_instruction()}
+    system_text = get_system_instruction()
+    if extra_instruction:
+        system_text += "\n" + extra_instruction
+    sys_msg = {"role": "system", "content": system_text}
     payload_history = [sys_msg, {"role": "assistant", "content": "Understood, Sir."}] + conversation_history
     
     payload = {
         "model": MODELS[current_model_idx],
         "messages": payload_history,
-        "tools": get_openai_tools(),
         "temperature": 0.2,
         "max_tokens": 500,
         "stream": True
     }
+    if allow_tools:
+        payload["tools"] = get_openai_tools()
     
     attempts = 0
     while attempts < len(MODELS):
@@ -192,3 +197,15 @@ async def generate_response_stream(prompt: str) -> AsyncGenerator[Dict[str, Any]
     
     print("DEBUG: Loop finished, all models exhausted.")
     yield {"type": "error", "content": "All models failed or rate limited."}
+
+
+async def generate_text(prompt: str, allow_tools: bool = True, extra_instruction: str = None) -> str:
+    """Non-streaming helper: returns the full reply text (errors are returned as text)."""
+    parts = []
+    async for chunk in generate_response_stream(prompt, allow_tools=allow_tools, extra_instruction=extra_instruction):
+        if chunk["type"] == "token":
+            parts.append(chunk["content"])
+        elif chunk["type"] == "error" and not parts:
+            print(f"[AI] {chunk['content']}")
+            return ""
+    return "".join(parts).strip()
