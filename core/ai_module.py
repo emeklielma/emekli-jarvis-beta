@@ -27,6 +27,8 @@ def get_system_instruction() -> str:
         "2. When the user requests an action (e.g., opening an app, muting volume, searching files, web search), ALWAYS CALL the relevant function/tool first. "
         "3. When responding, use a maximum of 1-2 short, clear sentences. Speed is everything. "
         "4. If a command is ambiguous, do not guess repeatedly; execute the most likely command directly. "
+        "5. Always reply in the same language the user used (Turkish or English). "
+        "- When the user wants to build a new app/website/game or continue working on a project, call open_claude. "
         "[APPLICATION AND SYSTEM EXECUTION RULES] "
         "- When an application name is mentioned, make a tool call to search the system PATH or standard directories (C:\\Program Files, %AppData%, Start Menu). "
         "- When launching a process directly in a Windows/Linux environment, separate parameters correctly. "

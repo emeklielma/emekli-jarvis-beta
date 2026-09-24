@@ -53,6 +53,14 @@ Requires a `.env` file in repo root with `GEMINI_API_KEY=...` (see `ai_module.py
 
 **Frontend (`frontend/src/App.jsx`)**: connects to the `/ws` WebSocket for live status/log updates and plays `audioUrl` responses as they arrive; also can POST plain text to `/api/chat` for typed input.
 
+**Phone access**: Vite listens on all interfaces (`server.host: true`) and proxies `/ws` and `/api` to the Python server on :8000, so the frontend always connects to its own origin — never hardcode `localhost:8000` in the UI. `npm run dev:phone` serves the same UI over HTTPS on :5174 (self-signed, `@vitejs/plugin-basic-ssl`) because phone browsers only allow the microphone (Web Speech API, "BU CİHAZIN MİKROFONU" button) on HTTPS. The server keeps the recent chat in `chat_history` (in `server.py`) and sends it as a `{"type": "history"}` message on every new WebSocket connection, so all devices show the same conversation.
+
+**Claude launcher**: `core/intents.py` matches Turkish/English phrases like "uygulama yapacağım" or "<isim> projesine devam edelim" before the LLM is called (`process_user_input` in `server.py`) and runs `core/claude_launcher.open_claude`, which opens Claude Code (`claude` / `claude --continue`) in the matching project folder, falling back to the Claude desktop app, then claude.ai. The same function is exposed to Gemini as the `open_claude` tool (`tools/claude_tools.py`).
+
+**Environment variables** (all optional, in `.env`): `JARVIS_STT_LANG` (speech recognition language, default `tr-TR`), `JARVIS_MIC_DEVICE` (input device index or name substring), `JARVIS_TTS_VOICE` (force one edge-tts voice; default picks Turkish or English per sentence), `JARVIS_PROJECTS_DIRS` (`;`-separated folders searched for projects), `JARVIS_NEW_PROJECTS_DIR`, `JARVIS_CLAUDE_MODE` (`auto`|`code`|`desktop`|`web`), `JARVIS_WAKE_WORD=0` (disable the openwakeword/clap listener, which keeps a second mic stream open).
+
+**Mic troubleshooting**: `python mic_test.py [device]` lists input devices, measures noise vs. speech level against the same threshold `speech_module` uses, and tries Google STT. `launch.py` writes backend output to `jarvis_server.log`.
+
 ## Notes
 
 - Windows-only in several places: `os.startfile`, MCI audio playback, PowerShell-based tools, `winmm`.

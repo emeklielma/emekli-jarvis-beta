@@ -15,13 +15,17 @@ def main():
     frontend_dir = os.path.join(root_dir, "frontend")
 
     print_cyan("[1/3] Starting Python Intelligence Core (server.py)...")
-    # Start the FastAPI server
+    # Start the FastAPI server. Mikrofon/hata mesajları görülebilsin diye çıktı dosyaya yazılıyor.
+    log_path = os.path.join(root_dir, "jarvis_server.log")
+    backend_log = open(log_path, "w", encoding="utf-8")
     backend_process = subprocess.Popen(
-        [sys.executable, "server.py"],
+        [sys.executable, "-u", "server.py"],
         cwd=root_dir,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=backend_log,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
     )
+    print_cyan(f"      Server log: {log_path}")
     time.sleep(2) # Give backend time to spin up
 
     print_cyan("[2/3] Starting Frontend Matrix (Vite)...")

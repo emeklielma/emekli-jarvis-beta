@@ -6,6 +6,7 @@
   "main": "main.cjs",
   "scripts": {
     "dev": "vite",
+    "dev:phone": "vite --mode phone",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^6.0.4",
     "electron": "^43.4.0",
     "oxlint": "^1.75.0",
