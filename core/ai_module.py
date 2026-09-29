@@ -7,17 +7,28 @@ from dotenv import load_dotenv
 from tools.registry import get_openai_tools, get_tool_map
 
 load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODELS = [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.0-flash'
+# Any OpenAI-compatible provider works. Default: Hermes (Nous Research) free models on OpenRouter.
+# Set LLM_API_KEY / LLM_BASE_URL / LLM_MODELS in .env; falls back to the old GEMINI_API_KEY setup.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.0-flash']
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+HERMES_MODELS = [
+    'nousresearch/hermes-3-llama-3.1-405b:free',
+    'nousresearch/hermes-3-llama-3.1-70b:free',
 ]
+
+API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY")
+BASE_URL = os.getenv("LLM_BASE_URL") or (OPENROUTER_URL if os.getenv("LLM_API_KEY") else GEMINI_URL)
+_models_env = os.getenv("LLM_MODELS")
+if _models_env:
+    MODELS = [m.strip() for m in _models_env.split(",") if m.strip()]
+else:
+    MODELS = HERMES_MODELS if os.getenv("LLM_API_KEY") else GEMINI_MODELS
 current_model_idx = 0
 
 def get_url():
-    return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    return BASE_URL
 
 def get_system_instruction() -> str:
     base_instruction = (
@@ -79,12 +90,14 @@ async def generate_response_stream(prompt: str, allow_tools: bool = True, extra_
     manage_history({"role": "user", "content": prompt})
     
     if not API_KEY or API_KEY.strip() == "":
-        yield {"type": "error", "content": "GEMINI_API_KEY bulunamadı. Lütfen .env dosyasını kontrol edin."}
+        yield {"type": "error", "content": "API anahtarı bulunamadı. .env dosyasına LLM_API_KEY (OpenRouter) veya GEMINI_API_KEY ekleyin."}
         return
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
+        "Authorization": f"Bearer {API_KEY}",
+        "HTTP-Referer": "http://localhost:8000",
+        "X-Title": "Jarvis"
     }
     
     system_text = get_system_instruction()
